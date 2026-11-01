@@ -1,0 +1,7 @@
+// The engine's own identity, when it runs on its own content: a game over
+// it names itself in its own game.ron (see src/game_info.rs).
+(
+    title: "Motorust Engine",
+    folder: "motorust-engine",
+    logo: (plain: "MOTO", accent: "RUST"),
+)

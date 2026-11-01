@@ -1,0 +1,5 @@
+// The engine's demo circuits, by the names of their files in this folder,
+// in the order of the track select screen (the first is the default one).
+[
+    "bahia.ron",
+]

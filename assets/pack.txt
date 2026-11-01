@@ -1,0 +1,36 @@
+# The engine's content pack: the files of this folder the engine runs on,
+# which a release build, and every web build, has built in (see
+# src/content.rs). One path in this folder a line; a line starting with #
+# is a comment. A game lays its own pack over it: a file is read from the
+# first pack that lists it, the game's before this one.
+
+# The engine's identity, when it runs on its own.
+game.ron
+
+# Its demo circuit (Bahía GP, with no song), and their list.
+circuits/circuits.ron
+circuits/bahia.ron
+
+# Its demo roster: the bikes built in code.
+bikes/roster.ron
+
+# The scenery's textures (src/world/textures.rs) and the sky's maps
+# (src/world/sky.rs): Poly Haven's (CC0) and NASA's (public domain).
+textures/grass.jpg
+textures/wall.jpg
+textures/rock.jpg
+textures/sand.jpg
+textures/asphalt.jpg
+textures/roof.jpg
+textures/plaster.jpg
+textures/milky_way.jpg
+textures/moon.jpg
+textures/earth.jpg
+textures/earth_clouds.jpg
+
+# The UI: its font (SIL OFL 1.1) and the gamepads' art (MIT or Apache-2.0).
+fonts/RussoOne-Regular.ttf
+ui/pads/dualsense.svg
+ui/pads/dualshock4.svg
+ui/pads/dualshock3.svg
+ui/pads/xbox.svg

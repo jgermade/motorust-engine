@@ -1,0 +1,192 @@
+// The Bay: a Mediterranean coast road with stone walls, street lamps, walls
+// of cut rock, stone pines, cypresses, olive trees and whitewashed houses,
+// the sea to the west and the south and mountains to the north-east.
+//
+// How a circuit's file is written: see src/circuits/data.rs.
+//
+// The engine's demo circuit (with no song: the engine runs a circuit
+// without one).
+(
+    name: "Bahía GP",
+    name_en: "Bahía GP",
+    description: "Una carretera junto al mar, con cuestas, peraltes\ny un salto en la recta de meta",
+    description_en: "A seaside road with slopes, banked turns\nand a jump on the main straight",
+    // A seaside road: the sea and its gulls, a few birds in the pines.
+    ambience: (
+        sea: 0.8,
+        gulls: 0.7,
+        birds: 0.3,
+        cicadas: 0.2,
+        wind: 0.2,
+    ),
+    pace: 1.0,
+    layout: (
+        control_points: [
+            (0.0, 0.0),
+            (0.0, -220.0),
+            (10.0, -380.0),
+            (70.0, -450.0),
+            (170.0, -460.0),
+            (240.0, -410.0),
+            (255.0, -320.0),
+            (215.0, -240.0),
+            (250.0, -160.0),
+            (320.0, -110.0),
+            (345.0, -10.0),
+            (305.0, 80.0),
+            (210.0, 110.0),
+            (125.0, 104.0),
+            (45.0, 104.0),
+            (5.0, 58.0),
+        ],
+        // Hay un cambio de rasante en la recta de meta, subida hasta lo alto
+        // de la zona este y bajada hacia la meta.
+        elevation: [
+            (0.0, 0.0),
+            (50.0, 0.6),
+            (120.0, 5.4),
+            // Cambio de rasante: a toda velocidad, la moto vuela, and lands
+            // on the straight, well before the first bend.
+            (155.0, 7.2),
+            (190.0, 4.2),
+            (250.0, 2.0),
+            (300.0, 2.0),
+            (382.0, 2.5),
+            (476.0, 4.0),
+            (578.0, 6.0),
+            (666.0, 8.0),
+            (758.0, 13.0),
+            (848.0, 16.0),
+            (938.0, 18.0),
+            (1024.0, 15.0),
+            (1130.0, 9.0),
+            (1230.0, 4.0),
+            (1332.0, 2.5),
+            (1416.0, 3.5),
+            (1498.0, 1.0),
+        ],
+        wall: 11.5,
+    ),
+    scenery: (
+        // The sea to the west and to the south of the circuit, beyond shores
+        // bent by waves.
+        coast: Sea(shores: [
+            // The west coast, 95 m west of the start straight.
+            (
+                normal: (1.0, 0.0),
+                offset: 95.0,
+                waves: [
+                    (along: (0.0, 1.0), amplitude: -25.0, length: 97.0),
+                    (along: (0.0, 1.0), amplitude: -12.0, length: 41.0, phase: 1.0),
+                ],
+            ),
+            // The south coast.
+            (
+                normal: (0.0, -1.0),
+                offset: 205.0,
+                waves: [
+                    (along: (1.0, 0.0), amplitude: 20.0, length: 83.0),
+                    (along: (1.0, 0.0), amplitude: 10.0, length: 37.0, phase: 2.0),
+                ],
+            ),
+        ]),
+        hills: 16.0,
+        greens: Lawn,
+        grass_shade: 1.0,
+        massifs: [
+            // On the right of the start straight: a wall of rock.
+            (center: (62.0, -215.0), radius: 52.0, height: 24.0),
+            (center: (150.0, -330.0), radius: 40.0, height: 16.0),
+            (center: (130.0, -60.0), radius: 55.0, height: 20.0),
+            (center: (420.0, -230.0), radius: 75.0, height: 38.0),
+            (center: (430.0, 60.0), radius: 60.0, height: 30.0),
+            (center: (140.0, -560.0), radius: 85.0, height: 42.0),
+            (center: (-60.0, -520.0), radius: 45.0, height: 22.0),
+            // Islotes.
+            (center: (-170.0, -260.0), radius: 35.0, height: 14.0),
+            (center: (40.0, 250.0), radius: 30.0, height: 10.0),
+        ],
+        cuttings: [
+            // La recta de meta, con la roca a la derecha y el mar a la izquierda.
+            (span: Span(40.0, 340.0), side: Right, height: 16.0),
+            (span: Span(470.0, 640.0), side: Left, height: 20.0),
+            // La subida del este, con el precipicio por fuera.
+            (span: Span(780.0, 1010.0), side: Left, height: 22.0),
+            (span: Span(1250.0, 1400.0), side: Right, height: 11.0),
+        ],
+        // Montañas tierra adentro, al noreste, que cierran el horizonte.
+        mountains: [
+            Range(
+                center: (170.0, -180.0),
+                near: 380.0,
+                far: 1300.0,
+                // Past a line through it, to the north-east.
+                toward: Some((1.0, -1.0)),
+                relief: (low: 104.0, high: 260.0, scale: 300.0, octaves: 4),
+            ),
+        ],
+        curbs: [(0.85, 0.08, 0.06), (0.95, 0.95, 0.95)],
+        walls: [
+            // Paseo marítimo con barandilla abierta al mar en la recta de meta
+            (span: Span(0.0, 340.0), side: Left, style: Railing),
+            // Barrera de hormigón en la bajada este
+            (span: Span(1040.0, 1220.0), side: Left, style: Concrete),
+        ],
+        gantries: [
+            (along: 0.0, color: (0.8, 0.08, 0.06), text: Some("BAHIA GP")),
+            (along: 780.0, color: (0.8, 0.08, 0.06), text: Some("CHECKPOINT")),
+        ],
+        billboards: [
+            (
+                along: 240.0,
+                side: Right,
+                text: "MOTORUST",
+                color: (0.1, 0.1, 0.12),
+                // From the fifth letter on in the game's rust orange.
+                accent: Some((4, (0.9, 0.4, 0.12))),
+            ),
+            (along: 270.0, side: Right, text: "OPEN ROAD", color: (0.08, 0.22, 0.75)),
+            (along: 620.0, side: Left, text: "SUPERBIKE", color: (0.75, 0.1, 0.08)),
+            (along: 1140.0, side: Right, text: "GRAND PRIX", color: (0.1, 0.5, 0.2)),
+        ],
+        // A lamp on the left all round, just past the wall.
+        lamps: [(span: Lap, side: Left, lateral: 12.4, every: 44.0)],
+        trees: [UmbrellaPine, Cypress, Olive, MaritimePine, Almond, Poplar],
+        houses: (
+            max: 12,
+            paints: [
+                (0.97, 0.96, 0.93),
+                (0.96, 0.9, 0.74),
+                (0.93, 0.78, 0.55),
+                (0.95, 0.83, 0.8),
+            ],
+            style: Cottage,
+        ),
+        buoys: [(-45.0, -100.0), (-70.0, -220.0), (-50.0, 40.0), (10.0, 190.0)],
+        lighthouses: [(position: (-170.0, -260.0), height: 22.0)],
+        boats: [
+            (position: (-85.0, -100.0), heading: 0.5, kind: Sailboat),
+            (position: (-120.0, -310.0), heading: -1.2, kind: Sailboat),
+            (position: (10.0, 230.0), heading: 2.2, kind: Yacht),
+            (position: (-150.0, 60.0), heading: 0.1, kind: Sailboat),
+        ],
+        chevrons: [
+            (along: 360.0, side: Right, direction: Right),
+            (along: 660.0, side: Left, direction: Left),
+            (along: 980.0, side: Right, direction: Right),
+        ],
+        grandstands: [(along: 70.0, side: Right, lateral: 16.5, length: 32.0)],
+        beach_parasols: [
+            (position: (-35.0, -110.0), count: 5),
+            (position: (-30.0, -40.0), count: 4),
+        ],
+        brake_markers: [
+            (along: 310.0, side: Right, distance: 100),
+            (along: 340.0, side: Right, distance: 50),
+            (along: 630.0, side: Left, distance: 50),
+        ],
+        soil: Rock,
+        sky: Day,
+        water: Sea,
+    ),
+)

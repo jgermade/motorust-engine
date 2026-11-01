@@ -1,0 +1,191 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 80 698 538" role="img">
+  <!--
+    Xbox-style controller (Series X|S), front view: the project owner's
+    design (2026-10-14). C and Z by the face buttons are for pads such as the
+    Flydigi Vader 5 Pro; the back buttons below the grips are not in the
+    front view.
+
+    The tester animates it through the data attributes described in
+    dualsense.svg (data-button, data-stick with data-cap, data-trigger).
+    data-label on a face button's mark: the mark shows only when the pad's
+    face layout gives the button that label.
+    data-optional on a control: dimmed, and never lit, on pads without it.
+  -->
+  <defs>
+    <linearGradient id="xb-body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.6" stop-color="#f4f5f9"/>
+      <stop offset="1" stop-color="#dde1ec"/>
+    </linearGradient>
+    <linearGradient id="xb-btn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e4e6ee"/>
+    </linearGradient>
+    <!-- Stick caps: the DualSense's colours, as in every drawing -->
+    <radialGradient id="xb-stick" cx="0.4" cy="0.35" r="0.8">
+      <stop offset="0" stop-color="#9ea3b5"/>
+      <stop offset="1" stop-color="#6a7083"/>
+    </radialGradient>
+    <radialGradient id="xb-dish" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.6" stop-color="#8f94a8" stop-opacity="0"/>
+      <stop offset="1" stop-color="#8f94a8" stop-opacity="0.22"/>
+    </radialGradient>
+    <clipPath id="xb-dpad-clip"><circle r="50.5"/></clipPath>
+    <filter id="xb-shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#1b2540" flood-opacity="0.18"/>
+    </filter>
+    <filter id="xb-soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#1b2540" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <!-- Triggers LT / RT: travel bars, drawn by the tester -->
+  <g data-trigger="left_trigger" data-x="158" data-y="90" data-width="76" data-height="18"/>
+  <g data-trigger="right_trigger" data-x="480" data-y="90" data-width="76" data-height="18"/>
+
+  <!-- Back buttons (Xbox Elite paddles, Vader 5 Pro M1-M4), below the grips -->
+  <g data-button="left_paddle_1">
+    <rect class="shape" x="42" y="597" width="40" height="14" rx="7"
+          fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.5" filter="url(#xb-soft)"/>
+  </g>
+  <g data-button="left_paddle_2">
+    <rect class="shape" x="92" y="597" width="40" height="14" rx="7"
+          fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.5" filter="url(#xb-soft)"/>
+  </g>
+  <g data-button="right_paddle_2">
+    <rect class="shape" x="582" y="597" width="40" height="14" rx="7"
+          fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.5" filter="url(#xb-soft)"/>
+  </g>
+  <g data-button="right_paddle_1">
+    <rect class="shape" x="632" y="597" width="40" height="14" rx="7"
+          fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.5" filter="url(#xb-soft)"/>
+  </g>
+
+  <!-- Body -->
+  <path d="M357 128 H255.0 C252.9 126.7 247.0 122.7 242.7 120.7 C238.4 118.8 234.0 116.8 229.3 116.0 C224.7 115.2 219.7 115.8 214.9 116.0 C210.1 116.3 205.3 116.8 200.5 117.5 C195.8 118.3 191.1 119.3 186.4 120.6 C181.8 121.8 177.1 123.2 172.7 125.0 C168.2 126.7 164.1 129.3 159.7 131.2 C155.3 133.1 150.0 133.6 146.3 136.3 C142.6 138.9 140.3 143.5 137.3 147.2 C134.3 150.8 131.4 154.7 128.4 158.5 C125.4 162.2 121.9 165.6 119.4 169.6 C116.9 173.6 115.2 178.2 113.1 182.5 C111.1 186.8 109.0 191.2 107.2 195.6 C105.3 200.1 103.6 204.6 101.7 209.0 C99.9 213.5 98.1 217.9 96.2 222.3 C94.3 226.7 92.2 231.1 90.4 235.5 C88.6 240.0 87.0 244.6 85.2 249.0 C83.4 253.4 81.0 257.6 79.4 262.0 C77.7 266.5 76.7 271.2 75.2 275.7 C73.7 280.3 72.0 284.8 70.4 289.3 C68.8 293.8 67.2 298.4 65.7 302.9 C64.1 307.5 62.8 312.1 61.3 316.7 C59.7 321.2 58.1 325.8 56.6 330.3 C55.0 334.9 53.3 339.4 51.9 343.9 C50.4 348.5 49.3 352.9 48.0 357.5 C46.7 362.1 45.4 366.8 44.2 371.4 C42.9 376.1 41.7 380.7 40.5 385.4 C39.3 390.0 38.1 394.7 36.9 399.4 C35.8 404.0 34.8 408.8 33.6 413.4 C32.5 418.1 31.1 422.9 30.1 427.4 C29.2 431.8 28.4 437.9 28.0 440.0 C27.7 445.0 26.5 460.7 26.0 470.0 C25.5 479.3 24.8 488.5 25.0 496.0 C25.2 503.5 26.0 508.0 27.0 515.0 C28.0 522.0 28.8 531.2 31.0 538.0 C33.2 544.8 35.8 550.7 40.0 556.0 C44.2 561.3 49.7 566.2 56.0 570.0 C62.3 573.8 71.0 577.3 78.0 579.0 C85.0 580.7 92.0 580.5 98.0 580.0 C104.0 579.5 109.7 578.3 114.0 576.0 C118.3 573.7 121.3 570.7 124.0 566.0 C126.7 561.3 127.0 553.7 130.0 548.0 C133.0 542.3 138.0 537.2 142.0 532.0 C146.0 526.8 150.0 522.2 154.0 517.0 C158.0 511.8 162.0 506.3 166.0 501.0 C170.0 495.7 174.0 490.2 178.0 485.0 C182.0 479.8 186.0 474.2 190.0 470.0 C194.0 465.8 198.0 462.8 202.0 460.0 C206.0 457.2 210.0 455.0 214.0 453.0 C218.0 451.0 222.0 449.2 226.0 448.0 C230.0 446.8 234.0 446.5 238.0 446.0 C242.0 445.5 248.0 445.2 250.0 445.0 H464 C466.0 445.2 472.0 445.5 476.0 446.0 C480.0 446.5 484.0 446.8 488.0 448.0 C492.0 449.2 496.0 451.0 500.0 453.0 C504.0 455.0 508.0 457.2 512.0 460.0 C516.0 462.8 520.0 465.8 524.0 470.0 C528.0 474.2 532.0 479.8 536.0 485.0 C540.0 490.2 544.0 495.7 548.0 501.0 C552.0 506.3 556.0 511.8 560.0 517.0 C564.0 522.2 568.0 526.8 572.0 532.0 C576.0 537.2 581.0 542.3 584.0 548.0 C587.0 553.7 587.3 561.3 590.0 566.0 C592.7 570.7 595.7 573.7 600.0 576.0 C604.3 578.3 610.0 579.5 616.0 580.0 C622.0 580.5 629.0 580.7 636.0 579.0 C643.0 577.3 651.7 573.8 658.0 570.0 C664.3 566.2 669.8 561.3 674.0 556.0 C678.2 550.7 680.8 544.8 683.0 538.0 C685.2 531.2 686.0 522.0 687.0 515.0 C688.0 508.0 688.8 503.5 689.0 496.0 C689.2 488.5 688.5 479.3 688.0 470.0 C687.5 460.7 686.3 445.0 686.0 440.0 C685.6 437.9 684.8 431.8 683.9 427.4 C682.9 422.9 681.5 418.1 680.4 413.4 C679.2 408.8 678.2 404.0 677.1 399.4 C675.9 394.7 674.7 390.0 673.5 385.4 C672.3 380.7 671.1 376.1 669.8 371.4 C668.6 366.8 667.3 362.1 666.0 357.5 C664.7 352.9 663.6 348.5 662.1 343.9 C660.7 339.4 659.0 334.9 657.4 330.3 C655.9 325.8 654.3 321.2 652.7 316.7 C651.2 312.1 649.9 307.5 648.3 302.9 C646.8 298.4 645.2 293.8 643.6 289.3 C642.0 284.8 640.3 280.3 638.8 275.7 C637.3 271.2 636.3 266.5 634.6 262.0 C633.0 257.6 630.6 253.4 628.8 249.0 C627.0 244.6 625.4 240.0 623.6 235.5 C621.8 231.1 619.7 226.7 617.8 222.3 C615.9 217.9 614.1 213.5 612.3 209.0 C610.4 204.6 608.7 200.1 606.8 195.6 C605.0 191.2 602.9 186.8 600.9 182.5 C598.8 178.2 597.1 173.6 594.6 169.6 C592.1 165.6 588.6 162.2 585.6 158.5 C582.6 154.7 579.7 150.8 576.7 147.2 C573.7 143.5 571.4 138.9 567.7 136.3 C564.0 133.6 558.7 133.1 554.3 131.2 C549.9 129.3 545.8 126.7 541.3 125.0 C536.9 123.2 532.2 121.8 527.6 120.6 C522.9 119.3 518.2 118.3 513.5 117.5 C508.7 116.8 503.9 116.3 499.1 116.0 C494.3 115.8 489.3 115.2 484.7 116.0 C480.0 116.8 475.6 118.8 471.3 120.7 C467.0 122.7 461.1 126.7 459.0 127.9 H357 Z" fill="url(#xb-body)" stroke="#c9cdd9" stroke-width="1.5" filter="url(#xb-shadow)"/>
+  <!-- Seams between the grips -->
+  <path d="M136.0 528.0 C138.0 525.7 144.0 519.0 148.0 514.0 C152.0 509.0 156.0 503.3 160.0 498.0 C164.0 492.7 168.0 487.2 172.0 482.0 C176.0 476.8 180.0 471.3 184.0 467.0 C188.0 462.7 191.7 459.2 196.0 456.0 C200.3 452.8 205.0 450.3 210.0 448.0 C215.0 445.7 220.3 443.5 226.0 442.0 C231.7 440.5 238.0 439.7 244.0 439.0 C250.0 438.3 259.0 438.2 262.0 438.0 L452 438 C455.0 438.2 464.0 438.3 470.0 439.0 C476.0 439.7 482.3 440.5 488.0 442.0 C493.7 443.5 499.0 445.7 504.0 448.0 C509.0 450.3 513.7 452.8 518.0 456.0 C522.3 459.2 526.0 462.7 530.0 467.0 C534.0 471.3 538.0 476.8 542.0 482.0 C546.0 487.2 550.0 492.7 554.0 498.0 C558.0 503.3 562.0 509.0 566.0 514.0 C570.0 519.0 576.0 525.7 578.0 528.0"
+        fill="none" stroke="#c6cad7" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- Bumpers LB / RB: the top edge above the seams; RB mirrors LB -->
+  <g data-button="left_shoulder">
+    <path class="shape" d="M140 152 C168 135 212 128 250 130 L255 128 C252.9 126.7 247.0 122.7 242.7 120.7 C238.4 118.8 234.0 116.8 229.3 116.0 C224.7 115.2 219.7 115.8 214.9 116.0 C210.1 116.3 205.3 116.8 200.5 117.5 C195.8 118.3 191.1 119.3 186.4 120.6 C181.8 121.8 177.1 123.2 172.7 125.0 C168.2 126.7 164.1 129.3 159.7 131.2 C155.3 133.1 150.0 133.6 146.3 136.3 C142.6 138.9 140.3 143.5 137.3 147.2 Z"
+          fill="url(#xb-btn)" stroke="#c6cad7" stroke-width="1.5" stroke-linejoin="round"/>
+  </g>
+  <g data-button="right_shoulder">
+    <path class="shape" transform="matrix(-1 0 0 1 714 0)" d="M140 152 C168 135 212 128 250 130 L255 128 C252.9 126.7 247.0 122.7 242.7 120.7 C238.4 118.8 234.0 116.8 229.3 116.0 C224.7 115.2 219.7 115.8 214.9 116.0 C210.1 116.3 205.3 116.8 200.5 117.5 C195.8 118.3 191.1 119.3 186.4 120.6 C181.8 121.8 177.1 123.2 172.7 125.0 C168.2 126.7 164.1 129.3 159.7 131.2 C155.3 133.1 150.0 133.6 146.3 136.3 C142.6 138.9 140.3 143.5 137.3 147.2 Z"
+          fill="url(#xb-btn)" stroke="#c6cad7" stroke-width="1.5" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Xbox button -->
+  <g data-button="home">
+    <circle class="shape" cx="357" cy="177" r="25"
+            fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.5" filter="url(#xb-soft)"/>
+    <circle class="mark" cx="357" cy="177" r="11" fill="none" stroke="#a9aebd" stroke-width="3"/>
+  </g>
+
+  <!-- View, Menu, Share -->
+  <g data-button="select">
+    <circle class="shape" cx="308" cy="242" r="14.5"
+            fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.5" filter="url(#xb-soft)"/>
+    <g fill="none" stroke="#8d92a3" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect class="mark" x="301.5" y="236" width="9" height="8" rx="1.5" fill="none"/>
+      <rect class="mark" x="306" y="240" width="9" height="8" rx="1.5" fill="#f2f3f8"/>
+    </g>
+  </g>
+  <g data-button="start">
+    <circle class="shape" cx="404" cy="242" r="14.5"
+            fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.5" filter="url(#xb-soft)"/>
+    <path class="mark" d="M398 237 H410 M398 242 H410 M398 247 H410"
+          fill="none" stroke="#8d92a3" stroke-width="1.6" stroke-linecap="round"/>
+  </g>
+  <g data-button="share">
+    <rect class="shape" x="337" y="264" width="38" height="23" rx="11.5"
+          fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.5" filter="url(#xb-soft)"/>
+    <path class="mark" d="M347 280 V283 H365 V280 M356 281 V270 M352 274 L356 270 L360 274"
+          fill="none" stroke="#8d92a3" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Sticks: the ring stays, the cap moves -->
+  <g data-stick="left" data-travel="10" data-value-y="185" transform="translate(187 243)">
+    <circle r="51" fill="#ffffff" stroke="#d5d9e4" stroke-width="2" filter="url(#xb-soft)"/>
+    <g data-cap="" data-button="left_stick">
+      <circle class="shape" r="40" fill="url(#xb-stick)" stroke="#5a5f71" stroke-width="1.6"/>
+      <circle class="shape" r="29" fill="none" stroke="#8a90a3" stroke-width="2"/>
+    </g>
+  </g>
+  <g data-stick="right" data-travel="10" data-value-y="86" transform="translate(443.5 342.5)">
+    <circle r="51" fill="#ffffff" stroke="#d5d9e4" stroke-width="2" filter="url(#xb-soft)"/>
+    <g data-cap="" data-button="right_stick">
+      <circle class="shape" r="40" fill="url(#xb-stick)" stroke="#5a5f71" stroke-width="1.6"/>
+      <circle class="shape" r="29" fill="none" stroke="#8a90a3" stroke-width="2"/>
+    </g>
+  </g>
+
+  <!-- D-pad: a disc with a 3x3 grid of facets; the middle ones are the arms -->
+  <g transform="translate(269.5 350.5)">
+    <circle r="52.5" fill="#e9ebf2" stroke="#c0c4d1" stroke-width="2" filter="url(#xb-soft)"/>
+    <g clip-path="url(#xb-dpad-clip)">
+      <rect x="-53" y="-53" width="35.5" height="35.5" fill="#ccd0de"/>
+      <rect x="17.5" y="-53" width="36" height="35.5" fill="#ccd0de"/>
+      <rect x="-17.5" y="-17.5" width="35" height="35" fill="#f1f3f8"/>
+      <rect x="-53" y="17.5" width="35.5" height="36" fill="#d2d6e2"/>
+      <rect x="17.5" y="17.5" width="36" height="36" fill="#d2d6e2"/>
+      <g data-button="dpad_up">
+        <rect class="shape" x="-17.5" y="-53" width="35" height="35.5" fill="#e2e5ed" stroke="none"/>
+      </g>
+      <g data-button="dpad_left">
+        <rect class="shape" x="-53" y="-17.5" width="35.5" height="35" fill="#e8eaf1" stroke="none"/>
+      </g>
+      <g data-button="dpad_right">
+        <rect class="shape" x="17.5" y="-17.5" width="36" height="35" fill="#e8eaf1" stroke="none"/>
+      </g>
+      <g data-button="dpad_down">
+        <rect class="shape" x="-17.5" y="17.5" width="35" height="36" fill="#fafbfd" stroke="none"/>
+      </g>
+      <path d="M-17.5 -53 V53 M17.5 -53 V53 M-53 -17.5 H53 M-53 17.5 H53" stroke="#b8bccb" stroke-width="1.2" fill="none"/>
+      <circle r="50.5" fill="url(#xb-dish)"/>
+    </g>
+    <circle r="50.5" fill="none" stroke="#ffffff" stroke-opacity="0.6" stroke-width="1"/>
+  </g>
+
+  <!-- Face buttons: Y, X, B, A -->
+  <g data-button="north">
+    <circle class="shape" cx="527" cy="199.5" r="23"
+            fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.8" filter="url(#xb-soft)"/>
+    <path class="mark" data-label="y" d="M520 191 L527 200 L534 191 M527 200 V210"
+          fill="none" stroke="#f0b81c" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g data-button="west">
+    <circle class="shape" cx="482.5" cy="244" r="23"
+            fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.8" filter="url(#xb-soft)"/>
+    <path class="mark" data-label="x" d="M475.5 235 L489.5 253 M489.5 235 L475.5 253"
+          fill="none" stroke="#2a97d6" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g data-button="east">
+    <circle class="shape" cx="571.5" cy="244" r="23"
+            fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.8" filter="url(#xb-soft)"/>
+    <path class="mark" data-label="b" d="M565 235 V253 M565 235 H571 C578 235 578 244 571 244 H565 M571 244 C579 244 579 253 571 253 H565"
+          fill="none" stroke="#e0453a" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g data-button="south">
+    <circle class="shape" cx="527" cy="288.5" r="23"
+            fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.8" filter="url(#xb-soft)"/>
+    <path class="mark" data-label="a" d="M519 298 L527 279 L535 298 M522.5 291 H531.5"
+          fill="none" stroke="#5fb62a" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- C and Z, below the face buttons (Flydigi Vader 5 Pro) -->
+  <g data-button="extra_0" data-optional="">
+    <circle class="shape" cx="559" cy="360" r="21"
+            fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.8" filter="url(#xb-soft)"/>
+    <path class="mark" d="M566 353 C562 350 552 351 552 360 C552 369 562 370 566 367"
+          fill="none" stroke="#8a8fa2" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g data-button="extra_1" data-optional="">
+    <circle class="shape" cx="601.5" cy="326" r="21"
+            fill="url(#xb-btn)" stroke="#c4c8d5" stroke-width="1.8" filter="url(#xb-soft)"/>
+    <path class="mark" d="M594.5 318 H608.5 L594.5 334 H608.5"
+          fill="none" stroke="#8a8fa2" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -1,0 +1,192 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 150 1044 700" role="img">
+  <!--
+    DualShock 4, front view: the project owner's design (2026-10-14). The
+    sticks and touchpad take the DualSense's stick colours, as in every
+    drawing, and the D-pad and buttons the DualSense's light ones.
+
+    Marked up for the tester like art/dualsense.svg (see there), with the
+    same arrangement: the shapes on the top edge are the L1/R1 bumpers, and
+    the L2/R2 travel bars go above them.
+  -->
+  <defs>
+    <linearGradient id="ds4-body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.6" stop-color="#f3f3f5"/>
+      <stop offset="1" stop-color="#e2e2e7"/>
+    </linearGradient>
+    <linearGradient id="ds4-pad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ececf0"/>
+      <stop offset="1" stop-color="#dcdce2"/>
+    </linearGradient>
+    <!-- Buttons and bumpers: the DualSense's -->
+    <radialGradient id="ds4-btn" cx="0.4" cy="0.35" r="0.8">
+      <stop offset="0" stop-color="#fbfbfe"/>
+      <stop offset="1" stop-color="#e4e5ef"/>
+    </radialGradient>
+    <linearGradient id="ds4-bump" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f1f1f8"/>
+      <stop offset="1" stop-color="#dcdce8"/>
+    </linearGradient>
+    <linearGradient id="ds4-touch" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9ea3b5"/>
+      <stop offset="1" stop-color="#6a7083"/>
+    </linearGradient>
+    <radialGradient id="ds4-cap" cx="0.4" cy="0.35" r="0.8">
+      <stop offset="0" stop-color="#9ea3b5"/>
+      <stop offset="1" stop-color="#6a7083"/>
+    </radialGradient>
+    <radialGradient id="ds4-ring" cx="0.5" cy="0.4" r="0.7">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ececf0"/>
+    </radialGradient>
+    <pattern id="ds4-dots" width="7" height="7" patternUnits="userSpaceOnUse">
+      <circle cx="3.5" cy="3.5" r="1" fill="#4a4a4f"/>
+    </pattern>
+    <filter id="ds4-shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#1b2540" flood-opacity="0.2"/>
+    </filter>
+    <path id="ds4-outline" d="M511.5 224 H290 C276 224 270 213 257 213 H140 C137.8 214.5 130.2 217.8 126.5 221.5 C122.8 225.1 120.7 230.5 117.9 235.0 C115.0 239.6 112.4 244.3 109.5 248.9 C106.7 253.4 103.6 257.9 100.7 262.4 C97.8 266.9 94.8 271.5 92.0 276.1 C89.2 280.7 86.4 285.3 83.9 290.0 C81.4 294.8 79.2 299.7 77.1 304.7 C75.1 309.7 73.5 314.9 71.6 319.9 C69.7 325.0 67.4 329.8 65.8 335.0 C64.2 340.1 63.4 345.4 62.1 350.7 C60.7 355.9 59.3 361.1 57.9 366.3 C56.5 371.5 55.1 376.7 53.8 381.9 C52.4 387.1 51.4 392.4 49.8 397.6 C48.2 402.7 45.5 407.5 44.2 412.6 C42.8 417.8 42.7 423.3 41.5 428.5 C40.4 433.8 38.7 438.9 37.4 444.1 C36.1 449.4 34.9 454.6 33.6 459.8 C32.3 465.1 30.8 470.3 29.6 475.5 C28.4 480.8 27.4 486.1 26.2 491.3 C25.0 496.6 23.8 501.8 22.4 507.0 C20.9 512.2 18.9 517.2 17.8 522.4 C16.6 527.7 16.2 533.0 15.3 538.3 C14.3 543.6 13.2 548.9 12.2 554.2 C11.2 559.5 10.0 564.8 9.0 570.1 C8.0 575.4 7.2 580.7 6.1 586.0 C5.0 591.3 4.1 596.6 2.7 601.8 C1.2 606.9 -1.3 611.8 -2.5 617.0 C-3.7 622.2 -3.9 627.7 -4.4 633.0 C-4.9 638.4 -5.1 643.8 -5.3 649.2 C-5.6 654.6 -5.7 659.9 -5.8 665.3 C-5.8 670.7 -5.8 676.1 -5.7 681.5 C-5.7 686.9 -5.5 692.3 -5.2 697.7 C-5.0 703.1 -4.7 708.4 -4.2 713.8 C-3.7 719.2 -3.7 724.8 -2.3 729.9 C-0.8 735.0 2.3 739.5 4.4 744.4 C6.5 749.3 8.3 754.4 10.4 759.4 C12.5 764.4 14.5 769.3 16.9 774.2 C19.3 779.0 21.8 783.8 24.7 788.4 C27.5 792.9 30.7 797.3 34.2 801.4 C37.7 805.4 41.6 809.3 45.8 812.7 C50.0 816.0 54.6 818.9 59.3 821.4 C64.1 823.9 69.1 826.1 74.2 827.7 C79.3 829.3 84.7 830.3 90.0 831.0 C95.3 831.7 100.7 832.1 106.1 832.0 C111.5 831.9 116.9 831.5 122.2 830.5 C127.4 829.5 132.5 827.4 137.6 825.9 C142.8 824.3 148.7 823.8 153.1 821.2 C157.5 818.7 160.2 814.0 164.1 810.5 C168.0 806.9 172.6 803.6 176.5 800.2 C180.3 796.9 184.1 794.3 187.2 790.3 C190.2 786.3 192.2 781.0 194.9 776.3 C197.5 771.7 200.4 767.1 203.2 762.5 C206.0 757.8 208.9 753.3 211.6 748.6 C214.2 744.0 217.2 739.4 219.3 734.5 C221.4 729.6 222.2 724.2 224.1 719.2 C225.9 714.1 228.0 709.1 230.3 704.3 C232.5 699.4 235.6 694.8 237.5 689.9 C239.5 684.9 240.2 679.5 241.9 674.4 C243.5 669.3 245.4 664.2 247.4 659.2 C249.4 654.2 252.1 649.5 253.9 644.4 C255.7 639.4 256.4 634.0 258.1 628.9 C259.9 623.8 261.1 618.0 264.3 614.0 C267.4 610.1 274.9 606.6 277.0 605.1 C279.2 606.0 285.8 608.5 290.0 610.7 C294.2 612.8 298.0 616.0 302.3 618.0 C306.6 620.1 311.3 621.4 315.8 622.9 C320.3 624.5 324.8 626.2 329.5 627.2 C334.2 628.2 339.0 628.5 343.8 628.7 C348.6 628.8 353.3 628.5 358.1 628.1 C362.9 627.7 367.7 627.2 372.3 626.1 C377.0 625.1 381.5 623.4 385.9 621.7 C390.4 620.0 394.9 618.2 399.1 615.9 C403.3 613.7 407.2 610.9 411.2 608.3 C415.3 605.7 421.1 601.7 423.1 600.4 H511.5 H600 C601.9 601.7 607.7 605.7 611.8 608.3 C615.8 610.9 619.7 613.7 623.9 615.9 C628.1 618.2 632.6 620.0 637.1 621.7 C641.5 623.4 646.0 625.1 650.7 626.1 C655.3 627.2 660.1 627.7 664.9 628.1 C669.7 628.5 674.4 628.8 679.2 628.7 C684.0 628.5 688.8 628.2 693.5 627.2 C698.2 626.2 702.7 624.5 707.2 622.9 C711.7 621.4 716.4 620.1 720.7 618.0 C725.0 616.0 728.8 612.8 733.0 610.7 C737.2 608.5 743.8 606.0 746.0 605.1 C748.1 606.6 755.6 610.1 758.7 614.0 C761.9 618.0 763.1 623.8 764.9 628.9 C766.6 634.0 767.3 639.4 769.1 644.4 C770.9 649.5 773.6 654.2 775.6 659.2 C777.6 664.2 779.5 669.3 781.1 674.4 C782.8 679.5 783.5 684.9 785.5 689.9 C787.4 694.8 790.5 699.4 792.7 704.3 C795.0 709.1 797.1 714.1 798.9 719.2 C800.8 724.2 801.6 729.6 803.7 734.5 C805.8 739.4 808.8 744.0 811.4 748.6 C814.1 753.3 817.0 757.8 819.8 762.5 C822.6 767.1 825.5 771.7 828.1 776.3 C830.8 781.0 832.8 786.3 835.8 790.3 C838.9 794.3 842.7 796.9 846.5 800.2 C850.4 803.6 855.0 806.9 858.9 810.5 C862.8 814.0 865.5 818.7 869.9 821.2 C874.3 823.8 880.2 824.3 885.4 825.9 C890.5 827.4 895.6 829.5 900.8 830.5 C906.1 831.5 911.5 831.9 916.9 832.0 C922.3 832.1 927.7 831.7 933.0 831.0 C938.3 830.3 943.7 829.3 948.8 827.7 C953.9 826.1 958.9 823.9 963.7 821.4 C968.4 818.9 973.0 816.0 977.2 812.7 C981.4 809.3 985.3 805.4 988.8 801.4 C992.3 797.3 995.5 792.9 998.3 788.4 C1001.2 783.8 1003.7 779.0 1006.1 774.2 C1008.5 769.3 1010.5 764.4 1012.6 759.4 C1014.7 754.4 1016.5 749.3 1018.6 744.4 C1020.7 739.5 1023.8 735.0 1025.3 729.9 C1026.7 724.8 1026.7 719.2 1027.2 713.8 C1027.7 708.4 1028.0 703.1 1028.2 697.7 C1028.5 692.3 1028.7 686.9 1028.7 681.5 C1028.8 676.1 1028.8 670.7 1028.8 665.3 C1028.7 659.9 1028.6 654.6 1028.3 649.2 C1028.1 643.8 1027.9 638.4 1027.4 633.0 C1026.9 627.7 1026.7 622.2 1025.5 617.0 C1024.3 611.8 1021.8 606.9 1020.3 601.8 C1018.9 596.6 1018.0 591.3 1016.9 586.0 C1015.8 580.7 1015.0 575.4 1014.0 570.1 C1013.0 564.8 1011.8 559.5 1010.8 554.2 C1009.8 548.9 1008.7 543.6 1007.7 538.3 C1006.8 533.0 1006.4 527.7 1005.2 522.4 C1004.1 517.2 1002.1 512.2 1000.6 507.0 C999.2 501.8 998.0 496.6 996.8 491.3 C995.6 486.1 994.6 480.8 993.4 475.5 C992.2 470.3 990.7 465.1 989.4 459.8 C988.1 454.6 986.9 449.4 985.6 444.1 C984.3 438.9 982.6 433.8 981.5 428.5 C980.3 423.3 980.2 417.8 978.8 412.6 C977.5 407.5 974.8 402.7 973.2 397.6 C971.6 392.4 970.6 387.1 969.2 381.9 C967.9 376.7 966.5 371.5 965.1 366.3 C963.7 361.1 962.3 355.9 960.9 350.7 C959.6 345.4 958.8 340.1 957.2 335.0 C955.6 329.8 953.3 325.0 951.4 319.9 C949.5 314.9 947.9 309.7 945.9 304.7 C943.8 299.7 941.6 294.8 939.1 290.0 C936.6 285.3 933.8 280.7 931.0 276.1 C928.2 271.5 925.2 266.9 922.3 262.4 C919.4 257.9 916.3 253.4 913.5 248.9 C910.6 244.3 908.0 239.6 905.1 235.0 C902.3 230.5 900.2 225.1 896.5 221.5 C892.8 217.8 885.2 214.5 882.9 213.1 H766 C753 213 747 224 733 224 Z"/>
+    <clipPath id="ds4-clip"><use href="#ds4-outline"/></clipPath>
+  </defs>
+
+  <!-- Body: the outline, also the grip pads' clip path -->
+  <use href="#ds4-outline" fill="url(#ds4-body)" stroke="#c6c6cc" stroke-width="2" filter="url(#ds4-shadow)"/>
+
+  <!-- Triggers L2 / R2: travel bars, drawn by the tester -->
+  <g data-trigger="left_trigger" data-x="145" data-y="160" data-width="110" data-height="26"/>
+  <g data-trigger="right_trigger" data-x="768" data-y="160" data-width="110" data-height="26"/>
+
+  <!-- Bumpers L1 / R1 -->
+  <g data-button="left_shoulder">
+    <path class="shape" d="M138 217 C139 203 150 198 176 198 H225 C251 198 261 203 262 217 Z" fill="url(#ds4-bump)" stroke="#b4b8c8" stroke-width="2.5"/>
+  </g>
+  <g data-button="right_shoulder">
+    <path class="shape" d="M885 217 C884 203 873 198 847 198 H798 C772 198 762 203 761 217 Z" fill="url(#ds4-bump)" stroke="#b4b8c8" stroke-width="2.5"/>
+  </g>
+
+  <!-- Grip pads -->
+  <g clip-path="url(#ds4-clip)">
+    <path d="M-10 695 C40 742 120 774 222 735 L270 900 L-10 900 Z" fill="url(#ds4-pad)"/>
+    <path d="M-10 695 C40 742 120 774 222 735" fill="none" stroke="#cfcfd5" stroke-width="2"/>
+    <g transform="translate(1023 0) scale(-1 1)">
+      <path d="M-10 695 C40 742 120 774 222 735 L270 900 L-10 900 Z" fill="url(#ds4-pad)"/>
+      <path d="M-10 695 C40 742 120 774 222 735" fill="none" stroke="#cfcfd5" stroke-width="2"/>
+    </g>
+  </g>
+
+  <!-- Touchpad -->
+  <g data-button="touchpad_click" data-touchpad="343 230 337 185">
+    <path class="shape" d="M339 226 H684 V404 Q684 419 669 419 H354 Q339 419 339 404 Z"
+          fill="url(#ds4-touch)" stroke="#b9b9bf" stroke-width="2.5"/>
+    <path d="M343 230 H680 V402 Q680 415 667 415 H356 Q343 415 343 402 Z" fill="url(#ds4-dots)"/>
+  </g>
+
+  <!-- Share / Options -->
+  <g data-button="select">
+    <rect class="shape" x="285" y="250" width="35" height="60" rx="16" fill="#f4f4fa" stroke="#a9adbd" stroke-width="2.5"/>
+  </g>
+  <g data-button="start">
+    <rect class="shape" x="704" y="250" width="35" height="61" rx="16" fill="#f4f4fa" stroke="#a9adbd" stroke-width="2.5"/>
+  </g>
+  <g font-family="Helvetica, Arial, sans-serif" font-size="13" letter-spacing="1" fill="#b8b8bd" text-anchor="middle">
+    <text x="304" y="244">SHARE</text>
+    <text x="726" y="244">OPTIONS</text>
+  </g>
+
+  <!-- Recesses of the D-pad and the face buttons -->
+  <g fill="#f5f5f7" stroke="#e1e1e6" stroke-width="2">
+    <circle cx="191.500" cy="381.500" r="116"/>
+    <circle cx="831.500" cy="381.500" r="116"/>
+  </g>
+  <g fill="#d6d6db">
+    <path d="M181 288 L193 272 L205 288 Z"/>
+    <path d="M181 475 L193 491 L205 475 Z" transform="translate(-3 0)"/>
+    <path d="M98 370 L82 382 L98 394 Z"/>
+    <path d="M285 370 L301 382 L285 394 Z"/>
+  </g>
+
+  <!-- D-pad: one arm, rotated around (191.5 381.5) -->
+  <g data-button="dpad_up">
+    <path class="shape" d="M166.800 353.800 L163.500 315 Q162.500 293.500 183 293.500 H200 Q220.500 293.500 219.500 315 L216.200 353.800 L191.500 376.500 Z"
+          fill="#f6f6fb" stroke="#3a3c48" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+  <g data-button="dpad_right" transform="rotate(90 191.500 381.500)">
+    <path class="shape" d="M166.800 353.800 L163.500 315 Q162.500 293.500 183 293.500 H200 Q220.500 293.500 219.500 315 L216.200 353.800 L191.500 376.500 Z"
+          fill="#f6f6fb" stroke="#3a3c48" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+  <g data-button="dpad_down" transform="rotate(180 191.500 381.500)">
+    <path class="shape" d="M166.800 353.800 L163.500 315 Q162.500 293.500 183 293.500 H200 Q220.500 293.500 219.500 315 L216.200 353.800 L191.500 376.500 Z"
+          fill="#f6f6fb" stroke="#3a3c48" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+  <g data-button="dpad_left" transform="rotate(270 191.500 381.500)">
+    <path class="shape" d="M166.800 353.800 L163.500 315 Q162.500 293.500 183 293.500 H200 Q220.500 293.500 219.500 315 L216.200 353.800 L191.500 376.500 Z"
+          fill="#f6f6fb" stroke="#3a3c48" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Face buttons: triangle, square, circle, cross -->
+  <g data-button="north">
+    <circle class="shape" cx="832" cy="307" r="35.500" fill="url(#ds4-btn)" stroke="#aeb2c2" stroke-width="3.2"/>
+    <path class="mark" d="M832 290 L848 317 H816 Z"
+          fill="none" stroke="#5ec7bd" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g data-button="west">
+    <circle class="shape" cx="756" cy="383" r="35.500" fill="url(#ds4-btn)" stroke="#aeb2c2" stroke-width="3.2"/>
+    <rect class="mark" x="741" y="368" width="30" height="30" rx="2"
+          fill="none" stroke="#e3a9d4" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g data-button="east">
+    <circle class="shape" cx="907" cy="383" r="35.500" fill="url(#ds4-btn)" stroke="#aeb2c2" stroke-width="3.2"/>
+    <circle class="mark" cx="907" cy="383" r="16"
+            fill="none" stroke="#e8697f" stroke-width="4"/>
+  </g>
+  <g data-button="south">
+    <circle class="shape" cx="832" cy="459" r="35.500" fill="url(#ds4-btn)" stroke="#aeb2c2" stroke-width="3.2"/>
+    <path class="mark" d="M818 445 L846 473 M846 445 L818 473"
+          fill="none" stroke="#7b9bf0" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <!-- Sticks: the ring stays, the cap moves -->
+  <g data-stick="left" data-travel="24" data-value-y="128" transform="translate(346 528)">
+    <circle r="99" fill="url(#ds4-ring)" stroke="#dcdce1" stroke-width="2"/>
+    <g data-cap="" data-button="left_stick">
+      <circle class="shape" r="64" fill="url(#ds4-cap)" stroke="#5a5f71" stroke-width="2.5"/>
+      <circle class="shape" r="46" fill="none" stroke="#8a90a3" stroke-width="3"/>
+    </g>
+  </g>
+  <g data-stick="right" data-travel="24" data-value-y="128" transform="translate(677 528)">
+    <circle r="99" fill="url(#ds4-ring)" stroke="#dcdce1" stroke-width="2"/>
+    <g data-cap="" data-button="right_stick">
+      <circle class="shape" r="64" fill="url(#ds4-cap)" stroke="#5a5f71" stroke-width="2.5"/>
+      <circle class="shape" r="46" fill="none" stroke="#8a90a3" stroke-width="3"/>
+    </g>
+  </g>
+
+  <!-- Speaker -->
+  <g fill="#232326">
+    <circle cx="474" cy="444" r="4.2"/>
+    <circle cx="493" cy="444" r="4.2"/>
+    <circle cx="511" cy="444" r="4.2"/>
+    <circle cx="530" cy="444" r="4.2"/>
+    <circle cx="548" cy="444" r="4.2"/>
+    <circle cx="484" cy="457" r="4.2"/>
+    <circle cx="502" cy="457" r="4.2"/>
+    <circle cx="520" cy="457" r="4.2"/>
+    <circle cx="539" cy="457" r="4.2"/>
+    <circle cx="493" cy="471" r="4.2"/>
+    <circle cx="511" cy="471" r="4.2"/>
+    <circle cx="530" cy="471" r="4.2"/>
+  </g>
+
+  <!-- PS button -->
+  <g data-button="home">
+    <circle class="shape" cx="511.500" cy="527.500" r="28" fill="url(#ds4-btn)" stroke="#aeb2c2" stroke-width="3.2"/>
+    <circle class="mark" cx="511.500" cy="527.500" r="11" fill="none" stroke="#c3c7d6" stroke-width="3"/>
+  </g>
+
+  <!-- EXT port -->
+  <rect x="460" y="591" width="102" height="11" rx="5.500" fill="#141416"/>
+  <g font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="0.8" fill="#8f8f95" text-anchor="middle">
+    <text x="494" y="586">EXT</text>
+  </g>
+  <path d="M537 585 a7 7 0 0 1 14 0" fill="none" stroke="#8f8f95" stroke-width="1.6" stroke-linecap="round"/>
+</svg>

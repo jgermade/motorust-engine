@@ -1,0 +1,69 @@
+// The engine's demo roster: the bikes built in code, with their painted
+// liveries, one for each place on the grid (eight). How a roster is
+// written: see the game's, assets/bikes/roster.ron.
+[
+    (
+        name: "Afilada",
+        description: "Azul y blanca, de morro afilado",
+        description_en: "Blue and white, with a sharp nose",
+        color: (0.35, 0.6, 1.0),
+        design: Afilada,
+        livery: "cover",
+    ),
+    (
+        name: "Escudo",
+        description: "Blanca y roja, de frontal vertical",
+        description_en: "White and red, with an upright front",
+        color: (1.0, 0.3, 0.35),
+        design: Escudo,
+        livery: "flecha",
+    ),
+    (
+        name: "Alerones",
+        description: "Con alerones y colín de cuchilla",
+        description_en: "With winglets and a blade tail",
+        color: (1.0, 0.85, 0.2),
+        design: Alerones,
+        livery: "diagonal",
+    ),
+    (
+        name: "Rombo",
+        description: "Verde, con el faro en rombo",
+        description_en: "Green, with a diamond headlight",
+        color: (0.4, 0.95, 0.4),
+        design: Rombo,
+        livery: "verde",
+    ),
+    (
+        name: "Afilada R",
+        description: "Tricolor, de morro afilado",
+        description_en: "Tricolour, with a sharp nose",
+        color: (1.0, 0.5, 0.3),
+        design: Afilada,
+        livery: "tricolor",
+    ),
+    (
+        name: "Escudo R",
+        description: "Roja, de frontal vertical",
+        description_en: "Red, with an upright front",
+        color: (0.95, 0.2, 0.2),
+        design: Escudo,
+        livery: "rosso",
+    ),
+    (
+        name: "Alerones R",
+        description: "Azul y blanca, con alerones",
+        description_en: "Blue and white, with winglets",
+        color: (0.5, 0.75, 1.0),
+        design: Alerones,
+        livery: "cover",
+    ),
+    (
+        name: "Rombo R",
+        description: "Blanca y roja, con el faro en rombo",
+        description_en: "White and red, with a diamond headlight",
+        color: (1.0, 0.6, 0.7),
+        design: Rombo,
+        livery: "flecha",
+    ),
+]

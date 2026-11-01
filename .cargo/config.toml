@@ -1,0 +1,13 @@
+# The engine's profiles when it is built on its own (a game's workspace sets
+# its own in its Cargo.toml): its code lightly optimized, so it compiles
+# quickly, and its dependencies fully (Bevy unoptimized runs at few FPS, and
+# the tests that build worlds take far longer).
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

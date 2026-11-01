@@ -1,0 +1,66 @@
+[package]
+name = "motorust-engine"
+version = "0.0.17"
+edition = "2024"
+rust-version = "1.95"
+description = "Motorust's engine: a motorbike racing game in Bevy, knowing nothing of the content it runs"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jgermade/motorust-engine"
+
+[lib]
+name = "motorust_engine"
+
+[features]
+# The engine's tests' content and checks (src/testing.rs and each module's
+# tests), for a game's tests to run the engine's checks on its own content.
+testing = []
+
+[dependencies]
+bevy = { version = "0.19", features = ["jpeg", "serialize"] }
+# Para guardar los ajustes (resolución, FPS y controles) entre partidas, con
+# las mismas versiones que ya usa Bevy.
+ron = "0.12"
+serde = { version = "1", features = ["derive"] }
+# The same version Bevy uses, to read each theme of a circuit's file by
+# the type a game registered under its name (see src/world/themes.rs).
+erased-serde = "0.4"
+# La misma versión que usa Bevy, para leer los mandos a nuestra manera (ver
+# src/gamepads.rs).
+gilrs = "0.11"
+# Para detectar el idioma del sistema y ponerlo por defecto.
+sys-locale = "0.3"
+# The same version Bevy uses, to decode the tracks' MP3 music and loop it
+# straight from the bytes built into the game (see src/sound/music.rs).
+rodio = { version = "0.22", default-features = false, features = ["mp3"] }
+
+# The same version Bevy uses, to draw the vector art of the start menu: the
+# slanted lettering and the helmet's SVG curves (see src/vector_art.rs).
+swash = "0.2"
+
+# Draws the gamepads of the controls' mapping from their SVG illustrations
+# (see src/pad_art.rs), on the tiny-skia Bevy already has; their few words in
+# the game's own font, so no system fonts.
+resvg = { version = "0.45", default-features = false, features = ["text"] }
+
+# En macOS, los mandos que conoce el sistema se leen con GameController, el
+# framework de Apple (ver src/gamepads/apple.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-game-controller = "0.3"
+
+# The same version Bevy uses, to read the CPU time and memory the game itself
+# takes for the performance log (Bevy's own reading is left out on macOS).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# En escritorio (Windows, Linux, macOS), cargamos y aplicamos el icono de la ventana.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+winit = { version = "0.30", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# En la web, los ajustes se guardan en el almacenamiento del navegador y se
+# avisa a la página cuando el juego ya se ve (la misma versión que ya usa
+# Bevy).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Document", "Element", "Storage", "Window"] }
+
