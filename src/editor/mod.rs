@@ -687,6 +687,7 @@ fn follow_reloads(
 }
 
 /// Moving over the ground, nearer and further, turning and tilting.
+#[allow(clippy::too_many_arguments)]
 fn steer_view(
     time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -722,7 +723,11 @@ fn steer_view(
     };
     // Shaping the ground, Shift and Ctrl with the wheel size the brush.
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let lines = if shaping.on && (ctrl || shift) { 0.0 } else { lines };
+    let lines = if shaping.on && (ctrl || shift) {
+        0.0
+    } else {
+        lines
+    };
     let zoom = lines
         + (pressed(&[KeyCode::Equal, KeyCode::NumpadAdd])
             - pressed(&[KeyCode::Minus, KeyCode::NumpadSubtract]))

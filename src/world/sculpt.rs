@@ -89,7 +89,9 @@ impl Sculpt {
     /// The grid's points within `radius` of `center`: their indices in
     /// `heights` and where they are.
     fn within(&self, center: Vec2, radius: f32) -> impl Iterator<Item = (usize, Vec2)> + '_ {
-        let low = ((center - radius - self.origin) / self.cell).floor().max(Vec2::ZERO);
+        let low = ((center - radius - self.origin) / self.cell)
+            .floor()
+            .max(Vec2::ZERO);
         let high = ((center + radius - self.origin) / self.cell).ceil();
         let (i0, j0) = (low.x as usize, low.y as usize);
         let i1 = (high.x.max(0.0) as usize).min(self.width.saturating_sub(1));
@@ -166,7 +168,9 @@ impl Sculpt {
             bytes.extend_from_slice(&count.to_le_bytes());
         }
         for &height in &self.heights {
-            let centimetres = (height * 100.0).round().clamp(i16::MIN as f32, i16::MAX as f32);
+            let centimetres = (height * 100.0)
+                .round()
+                .clamp(i16::MIN as f32, i16::MAX as f32);
             bytes.extend_from_slice(&(centimetres as i16).to_le_bytes());
         }
         bytes
@@ -192,8 +196,11 @@ impl Sculpt {
         let width = u32::from_le_bytes(word(20)?) as usize;
         let depth = u32::from_le_bytes(word(24)?) as usize;
         let body = &bytes[28..];
-        if body.len() != 2 * width * depth || !(cell > 0.0) {
-            return Err(format!("{width} by {depth} points, {} bytes of them", body.len()));
+        if body.len() != 2 * width * depth || cell.is_nan() || cell <= 0.0 {
+            return Err(format!(
+                "{width} by {depth} points, {} bytes of them",
+                body.len()
+            ));
         }
         let heights = body
             .chunks_exact(2)
@@ -328,7 +335,13 @@ mod tests {
     #[test]
     fn off_the_grid_nothing_is_shaped() {
         let mut sculpt = grid();
-        sculpt.apply(&brush(Tool::Raise), Vec2::new(95.0, 95.0), 1.0, |_| 0.0, 0.0);
+        sculpt.apply(
+            &brush(Tool::Raise),
+            Vec2::new(95.0, 95.0),
+            1.0,
+            |_| 0.0,
+            0.0,
+        );
         assert_eq!(sculpt.at(Vec2::new(150.0, 0.0)), 0.0);
         assert_eq!(sculpt.at(Vec2::new(-150.0, 0.0)), 0.0);
         assert!(sculpt.at(Vec2::new(95.0, 95.0)) > 0.0);
@@ -360,7 +373,11 @@ mod tests {
         for _ in 0..30 {
             sculpt.apply(&brush(Tool::Smooth), Vec2::ZERO, 0.1, |_| 0.0, 0.0);
         }
-        assert!(sculpt.at(Vec2::ZERO) < 0.6 * top, "{} of {top}", sculpt.at(Vec2::ZERO));
+        assert!(
+            sculpt.at(Vec2::ZERO) < 0.6 * top,
+            "{} of {top}",
+            sculpt.at(Vec2::ZERO)
+        );
         for _ in 0..200 {
             sculpt.apply(&brush(Tool::Restore), Vec2::ZERO, 0.1, |_| 0.0, 0.0);
         }
@@ -370,9 +387,18 @@ mod tests {
     #[test]
     fn a_file_reads_back_as_it_was_written_to_the_centimetre() {
         let mut sculpt = grid();
-        sculpt.apply(&brush(Tool::Raise), Vec2::new(10.0, -20.0), 0.37, |_| 0.0, 0.0);
+        sculpt.apply(
+            &brush(Tool::Raise),
+            Vec2::new(10.0, -20.0),
+            0.37,
+            |_| 0.0,
+            0.0,
+        );
         let read = Sculpt::decode(&sculpt.encode()).unwrap();
-        assert_eq!((read.origin, read.cell, read.width, read.depth), (sculpt.origin, sculpt.cell, sculpt.width, sculpt.depth));
+        assert_eq!(
+            (read.origin, read.cell, read.width, read.depth),
+            (sculpt.origin, sculpt.cell, sculpt.width, sculpt.depth)
+        );
         for (a, b) in read.heights.iter().zip(&sculpt.heights) {
             assert!((a - b).abs() <= 0.005);
         }

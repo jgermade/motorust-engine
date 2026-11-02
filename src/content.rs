@@ -206,7 +206,8 @@ pub fn list_beside(beside: &str, path: &str) -> Result<(), String> {
         .find(|pack| listed(pack).contains(&beside))
         .ok_or_else(|| format!("{beside}: in no content pack (pack.txt)"))?;
     let list = Path::new(pack.folder).join("pack.txt");
-    let text = std::fs::read_to_string(&list).map_err(|error| format!("{}: {error}", list.display()))?;
+    let text =
+        std::fs::read_to_string(&list).map_err(|error| format!("{}: {error}", list.display()))?;
     let mut lines: Vec<&str> = text.lines().collect();
     let at = lines
         .iter()

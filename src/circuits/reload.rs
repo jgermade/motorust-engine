@@ -181,8 +181,14 @@ mod tests {
         // The list, two circuits' files, their two companions.
         let before = [at(1), at(2), at(3), None, at(5)];
         assert!(companions_changed(&before, &before, 2).is_empty());
-        assert_eq!(companions_changed(&before, &[at(1), at(2), at(3), at(9), at(5)], 2), [0]);
-        assert_eq!(companions_changed(&before, &[at(1), at(2), at(3), None, at(6)], 2), [1]);
+        assert_eq!(
+            companions_changed(&before, &[at(1), at(2), at(3), at(9), at(5)], 2),
+            [0]
+        );
+        assert_eq!(
+            companions_changed(&before, &[at(1), at(2), at(3), None, at(6)], 2),
+            [1]
+        );
         // A circuit's own file changing is not its companion's.
         assert!(companions_changed(&before, &[at(1), at(7), at(3), None, at(5)], 2).is_empty());
     }

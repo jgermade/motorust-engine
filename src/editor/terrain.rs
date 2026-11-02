@@ -163,8 +163,8 @@ pub fn shaping_keys(
 ) {
     // A circuit opened (or read again): its shaping as built.
     let built = circuits.at(editor.circuit).scenery.sculpt;
-    let reopened = *opened != Some(editor.circuit)
-        || (!shaping.changed && !same(shaping.built, built));
+    let reopened =
+        *opened != Some(editor.circuit) || (!shaping.changed && !same(shaping.built, built));
     if reopened {
         shaping.open(built);
         *opened = Some(editor.circuit);
@@ -295,10 +295,10 @@ pub fn brush_the_ground(
             continue;
         };
         let id = mesh.id();
-        let Some(mesh) = meshes.get_mut(id) else {
+        let Some(mut mesh) = meshes.get_mut(id) else {
             continue;
         };
-        shape_mesh(mesh, id, center, reach, &track, &terrain, &mut shaping);
+        shape_mesh(&mut mesh, id, center, reach, &track, &terrain, &mut shaping);
     }
 }
 
@@ -402,7 +402,10 @@ pub fn draw_brush(
     };
     let center = Vec2::new(at.x, at.z);
     let color = tool_color(shaping.brush.tool);
-    for (radius, alpha) in [(shaping.brush.radius, 1.0), (shaping.brush.radius * 0.5, 0.5)] {
+    for (radius, alpha) in [
+        (shaping.brush.radius, 1.0),
+        (shaping.brush.radius * 0.5, 0.5),
+    ] {
         let ring = (0..=48).map(|k| {
             let angle = std::f32::consts::TAU * k as f32 / 48.0;
             let p = center + Vec2::from_angle(angle) * radius;
@@ -446,16 +449,29 @@ mod tests {
     fn a_ray_down_meets_the_ground_where_it_is() {
         // A slope rising to the east, a ray down from 100 m up.
         let height = |p: Vec2| p.x * 0.1;
-        let at = ray_to_ground(Vec3::new(50.0, 100.0, 0.0), Vec3::new(0.0, -1.0, 0.0), 500.0, height)
-            .unwrap();
+        let at = ray_to_ground(
+            Vec3::new(50.0, 100.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+            500.0,
+            height,
+        )
+        .unwrap();
         assert!((at.y - 5.0).abs() < 0.01, "{at}");
         // Slanting, it meets it further on, on the ground.
-        let at = ray_to_ground(Vec3::new(0.0, 100.0, 0.0), Vec3::new(1.0, -1.0, 0.0), 500.0, height)
-            .unwrap();
+        let at = ray_to_ground(
+            Vec3::new(0.0, 100.0, 0.0),
+            Vec3::new(1.0, -1.0, 0.0),
+            500.0,
+            height,
+        )
+        .unwrap();
         assert!((at.y - height(Vec2::new(at.x, at.z))).abs() < 0.01, "{at}");
         // Up, or from under the ground, it does not.
         assert_eq!(ray_to_ground(Vec3::Y * 100.0, Vec3::Y, 500.0, height), None);
-        assert_eq!(ray_to_ground(Vec3::new(50.0, 0.0, 0.0), -Vec3::Y, 500.0, height), None);
+        assert_eq!(
+            ray_to_ground(Vec3::new(50.0, 0.0, 0.0), -Vec3::Y, 500.0, height),
+            None
+        );
     }
 
     #[test]
@@ -463,11 +479,13 @@ mod tests {
         let mut shaping = Shaping::default();
         shaping.remember();
         shaping.sculpt = Some(Sculpt::flat(Vec2::ZERO, Vec2::splat(100.0), CELL));
-        shaping
-            .sculpt
-            .as_mut()
-            .unwrap()
-            .apply(&Brush::default(), Vec2::splat(50.0), 1.0, |_| 0.0, 0.0);
+        shaping.sculpt.as_mut().unwrap().apply(
+            &Brush::default(),
+            Vec2::splat(50.0),
+            1.0,
+            |_| 0.0,
+            0.0,
+        );
         let shaped = shaping.change_at(Vec2::splat(50.0));
         assert!(shaped > 0.0);
         assert!(shaping.undo());
