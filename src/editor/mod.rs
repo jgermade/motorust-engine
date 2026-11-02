@@ -346,6 +346,7 @@ fn follow_reloads(
 ) {
     for reloaded in reloads.read() {
         if reloaded.0.contains(&editor.circuit) && editor.circuit < circuits.len() {
+            info!("editor: circuit read again, changed: {}", editor.edit.changed);
             if editor.edit.changed {
                 editor.message = "The file changed on the disk; not read (unsaved changes)".into();
             } else {
@@ -500,6 +501,7 @@ fn edit_keys(
         editor.message = match save(&editor) {
             Ok(path) => {
                 editor.edit.changed = false;
+                info!("editor: saved into {path}");
                 format!("Saved into {path}")
             }
             Err(error) => format!("Not saved: {error}"),
