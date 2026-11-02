@@ -1,0 +1,108 @@
+# Publishes a new version, by hand from the Actions tab: choose which part
+# of the version goes up (major, minor or patch); build.yml then tests the
+# engine and builds it for every system with that version, Cargo.toml (and
+# Cargo.lock) on main take it, and a GitHub release is made, tagged on that
+# commit, with the builds and their SHA-256 sums attached.
+#
+# The version goes up from the higher of the last vX.Y.Z tag and the one in
+# Cargo.toml: from 0.0.17, patch gives 0.0.18, minor 0.1.0, major 1.0.0.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version goes up
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+
+# One release after another, never two at once.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: The new version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Work the version out
+        id: next
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          current=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          last=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          base=$(printf '%s\n%s\n' "$current" "${last#v}" | grep . | sort -V | tail -n 1)
+          IFS=. read -r major minor patch <<< "${base:-0.0.0}"
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "Cannot bump \"$BUMP\""; exit 1 ;;
+          esac
+          version="$major.$minor.$patch"
+          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+            echo "The tag v$version exists already"
+            exit 1
+          fi
+          echo "From $base (Cargo.toml $current, last tag ${last:-none}) to v$version ($BUMP)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    needs: version
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+
+  release:
+    name: GitHub release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: motorust-engine-*
+          path: dist
+          merge-multiple: true
+      - name: SHA-256 sums
+        run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: The version into Cargo.toml, on main
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          perl -0pi -e 's/^version = "[^"]*"/version = "'"$VERSION"'"/m' Cargo.toml
+          perl -0pi -e 's/^(name = "motorust-engine"\nversion = )"[^"]*"/${1}"'"$VERSION"'"/m' Cargo.lock
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Built already: no other build for this commit.
+          git commit -am "v$VERSION [skip ci]"
+          git push origin main
+      - name: Make the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target main \
+            --title "Motorust Engine $VERSION" \
+            --generate-notes

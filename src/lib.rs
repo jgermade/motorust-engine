@@ -18,6 +18,7 @@ pub mod bike;
 pub mod camera;
 pub mod circuits;
 pub mod content;
+pub mod crash;
 pub mod curves_hud;
 pub mod debug_start;
 pub mod game_info;

@@ -1,0 +1,184 @@
+# Tests the engine and builds it: its format, clippy and tests, then its
+# demo (`src/main.rs`, the engine on its own content) for Linux, Windows,
+# macOS (Apple Silicon and Intel) and WebAssembly. Each build is left as an
+# artifact of the run: a .tar.gz (a .zip on Windows and for the web) with
+# the executable, or the web version ready to be served, its content built
+# in, the README, the licences and the content's credits.
+#
+# Runs on every push to main and every pull request, by hand from the
+# Actions tab, and called by release.yml, which gives it the version to
+# build. Only on GitHub's runners: the repository is public, and a pull
+# request from a fork must never run on a machine of ours.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: The version to build, without the v (for example 1.2.0)
+        type: string
+        required: false
+        default: ""
+
+# On a pull request, a new push cancels the run before it. Called by
+# release.yml, the group is the release's, and does not clash with these.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+  # What Bevy needs to build on Linux.
+  LINUX_PACKAGES: >-
+    g++ pkg-config libx11-dev libasound2-dev libudev-dev libxkbcommon-x11-0
+    libwayland-dev libxkbcommon-dev zip clang lld
+
+jobs:
+  test:
+    name: Tests, format and clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: macOS Apple Silicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macOS Intel
+            os: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Version
+        id: version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION" ]; then
+            # The release's: into Cargo.toml, for the executable to carry it.
+            perl -0pi -e 's/^version = "[^"]*"/version = "'"$VERSION"'"/m' Cargo.toml
+            echo "label=$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "label=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --bin motorust-engine
+      - name: Package
+        env:
+          TARGET: ${{ matrix.target }}
+          LABEL: ${{ steps.version.outputs.label }}
+        run: |
+          name="motorust-engine-$LABEL-$TARGET"
+          mkdir -p "dist/$name"
+          cp README.md LICENSE-MIT LICENSE-APACHE assets/CREDITS.md "dist/$name/"
+          if [[ "$TARGET" == *"windows"* ]]; then
+            cp "target/$TARGET/release/motorust-engine.exe" "dist/$name/"
+            (cd dist && 7z a -tzip "$name.zip" "$name" > /dev/null)
+          else
+            cp "target/$TARGET/release/motorust-engine" "dist/$name/"
+            (cd dist && tar czf "$name.tar.gz" "$name")
+          fi
+          rm -r "dist/$name"
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: motorust-engine-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  wasm:
+    name: Build WebAssembly
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32
+      - name: wasm-bindgen
+        run: |
+          # The same version as the library in Cargo.lock, or they do not
+          # understand each other.
+          version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+          echo "wasm-bindgen $version"
+          if [ "$(wasm-bindgen --version 2>/dev/null)" != "wasm-bindgen $version" ]; then
+            cargo install wasm-bindgen-cli --locked --version "$version"
+          fi
+      - name: Version
+        id: version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION" ]; then
+            # The release's: into Cargo.toml, for the page to show it.
+            perl -0pi -e 's/^version = "[^"]*"/version = "'"$VERSION"'"/m' Cargo.toml
+            echo "label=$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "label=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build
+        run: web/build.sh dist/web
+      - name: Package
+        env:
+          TARGET: wasm32-unknown-unknown
+          LABEL: ${{ steps.version.outputs.label }}
+        run: |
+          name="motorust-engine-$LABEL-$TARGET"
+          mkdir -p "dist-pkg/$name"
+          cp -r dist/web/* README.md LICENSE-MIT LICENSE-APACHE assets/CREDITS.md "dist-pkg/$name/"
+          (cd dist-pkg && zip -r "$name.zip" "$name" > /dev/null)
+          rm -r "dist-pkg/$name"
+          ls -l dist-pkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: motorust-engine-wasm32-unknown-unknown
+          path: dist-pkg/*
+          if-no-files-found: error

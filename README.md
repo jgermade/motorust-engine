@@ -46,7 +46,9 @@ fn main() {
 }
 ```
 
-`cargo test` runs the engine's tests on its own content. Its checks of
+`cargo run --release` runs the engine on its own content (`src/main.rs`:
+its demo circuit and roster). `cargo test` runs the engine's tests on its
+own content. Its checks of
 circuits and bikes (each `NAME_on` in a module's tests) are there for a
 game's tests to run on its own content, with the `testing` feature.
 
@@ -54,7 +56,23 @@ game's tests to run on its own content, with the `testing` feature.
 
 | Tool | What it does |
 |---|---|
+| `web/build.sh` | Builds the web version of the demo into a folder ready to be served (`dist/web` by default): the page (`web/index.html`), the `.wasm` and the JavaScript that loads it. Needs the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at `Cargo.lock`'s version of `wasm-bindgen`. |
 | `tools/circuit_layout.py` | Works a circuit's lap out from its file (`assets/circuits/NAME.ron`) as `src/track.rs` does (the centre line and the height profile), draws it from above and its profile, and reports its length, its tightest bend, its steepest grade and the crests the bike takes off over, against the limits the tests set. Needs numpy (and matplotlib for the pictures). |
+
+## Builds and releases
+
+- **`.github/workflows/build.yml`**, on every push to `main` and every pull
+  request (and by hand): format, clippy and the tests, then the demo built
+  for Linux x86_64, Windows x86_64, macOS (Apple Silicon and Intel) and
+  WebAssembly, each left as an artifact of the run
+  (`motorust-engine-<version>-<target>.tar.gz`, or `.zip` for Windows and
+  the web). Only on GitHub's runners.
+- **`.github/workflows/release.yml`**, by hand from the Actions tab,
+  choosing `major`, `minor` or `patch`: the version goes up from the higher
+  of the last `vX.Y.Z` tag and `Cargo.toml`'s, `build.yml` builds it with
+  that version, `Cargo.toml` and `Cargo.lock` on `main` take it (a commit
+  `vX.Y.Z`), and a GitHub release `vX.Y.Z` is made on that commit with the
+  builds and their `SHA256SUMS.txt`.
 
 ## Licence
 

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en" data-motorust="waiting">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Motorust Engine</title>
+  <style>
+    :root {
+      --bg: #101114;
+      --ink: #eceef2;
+      --muted: #9aa0ab;
+      --rust: #e6661f;
+      --bar: #2a2d34;
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+    /* The engine draws in the canvas named after its folder (game.ron). */
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      outline: none;
+    }
+    #loader {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      gap: 18px;
+      padding: 16px;
+      text-align: center;
+      background: var(--bg);
+    }
+    [data-motorust="ready"] #loader { display: none; }
+    h1 {
+      margin: 0;
+      font-size: clamp(40px, 10vw, 84px);
+      font-weight: 900;
+      letter-spacing: 0.04em;
+      line-height: 1;
+    }
+    h1 span { color: var(--rust); }
+    .engine {
+      margin-top: -10px;
+      color: var(--muted);
+      letter-spacing: 0.4em;
+      text-transform: uppercase;
+      font-size: 13px;
+    }
+    #start {
+      padding: 12px 36px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--rust);
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    #start:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+    [data-motorust="loading"] #start,
+    [data-motorust="starting"] #start,
+    [data-motorust="failed"] #start { display: none; }
+    .bar {
+      width: min(320px, 80vw);
+      height: 6px;
+      border-radius: 3px;
+      background: var(--bar);
+      overflow: hidden;
+      visibility: hidden;
+    }
+    [data-motorust="loading"] .bar,
+    [data-motorust="starting"] .bar { visibility: visible; }
+    .bar div { width: 0; height: 100%; background: var(--rust); }
+    #status { min-height: 1.5em; color: var(--muted); }
+    [data-motorust="failed"] #status { color: #ff8a80; }
+    footer { color: var(--muted); font-size: 13px; }
+    footer a { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <canvas id="motorust-engine" tabindex="0"></canvas>
+  <div id="loader">
+    <h1>MOTO<span>RUST</span></h1>
+    <div class="engine">Engine · v__VERSION__</div>
+    <button id="start" type="button">Start</button>
+    <div class="bar"><div id="progress"></div></div>
+    <div id="status">The demo circuit, in the browser (WebGL2).</div>
+    <footer>
+      <a href="https://github.com/jgermade/motorust-engine">github.com/jgermade/motorust-engine</a>
+    </footer>
+  </div>
+  <script type="module">
+    // web/build.sh fills in the .wasm's size, for the progress bar.
+    const WASM_BYTES = 0;
+    const WASM_URL = "./motorust_engine_bg.wasm?v=__VERSION__";
+
+    const page = document.documentElement;
+    const status = document.getElementById("status");
+    const progress = document.getElementById("progress");
+    const canvas = document.getElementById("motorust-engine");
+    const start = document.getElementById("start");
+
+    const fail = (message) => {
+      if (page.dataset.motorust === "ready") return;
+      page.dataset.motorust = "failed";
+      status.textContent = message;
+    };
+
+    // The engine marks the page ready (data-motorust="ready") once it runs.
+    new MutationObserver(() => {
+      if (page.dataset.motorust === "ready") canvas.focus();
+    }).observe(page, { attributes: true, attributeFilter: ["data-motorust"] });
+    canvas.addEventListener("pointerdown", () => canvas.focus());
+    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+    window.addEventListener("error", (event) => {
+      // winit leaves its event loop by throwing this, on purpose.
+      if (String(event.message).includes("Using exceptions for control flow")) return;
+      fail(`The engine could not start: ${event.message}`);
+    });
+
+    // The .wasm, with its progress shown as it comes.
+    async function download(url) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`${url}: ${response.status}`);
+      const total = WASM_BYTES || Number(response.headers.get("content-length")) || 0;
+      if (!response.body) return response.arrayBuffer();
+      const reader = response.body.getReader();
+      const chunks = [];
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        if (total) progress.style.width = `${Math.min(100, (100 * received) / total)}%`;
+        status.textContent = `Downloading… ${(received / 1048576).toFixed(1)} MB`;
+      }
+      const bytes = new Uint8Array(received);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return bytes;
+    }
+
+    // Started by a click or a key, so that the browser lets it play sound.
+    function chosen() {
+      return new Promise((resolve) => {
+        const onKey = (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            go();
+          }
+        };
+        const go = () => {
+          window.removeEventListener("keydown", onKey);
+          start.removeEventListener("click", go);
+          resolve();
+        };
+        start.addEventListener("click", go);
+        window.addEventListener("keydown", onKey);
+      });
+    }
+
+    try {
+      if (!document.createElement("canvas").getContext("webgl2")) {
+        throw new Error("this browser has no WebGL2");
+      }
+      if (WASM_BYTES) {
+        status.textContent = `About ${Math.round(WASM_BYTES / 1048576)} MB to download.`;
+      }
+      start.focus();
+      await chosen();
+      page.dataset.motorust = "loading";
+      const bytes = await download(WASM_URL);
+      progress.style.width = "100%";
+      page.dataset.motorust = "starting";
+      status.textContent = "Building the track…";
+      // A frame for the page to show it before the engine takes over.
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
+      const { default: init } = await import("./motorust_engine.js");
+      await init({ module_or_path: bytes });
+    } catch (error) {
+      if (!String(error).includes("Using exceptions for control flow")) {
+        console.error(error);
+        fail(`The engine could not start: ${error.message ?? error}`);
+      }
+    }
+  </script>
+</body>
+</html>
