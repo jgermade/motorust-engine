@@ -26,6 +26,17 @@ pub const SEA_LEVEL: f32 = -1.0;
 /// Hasta esta distancia de la línea central, el terreno es la prolongación de
 /// la carretera (incluido el arcén hasta los muros).
 const FLAT: f32 = WALL_DISTANCE + 1.5;
+/// How far from a road's middle the ground shaped by hand (see
+/// [`super::sculpt`]) is shaped all the way (m): from just past its walls,
+/// eased in, so that the road keeps its own ground beside it.
+pub const SCULPT_REACH: (f32, f32) = (FLAT, FLAT + 8.0);
+
+/// How much of the ground's shaping by hand there is `distance` m from the
+/// nearest road's middle.
+pub fn sculpt_reach(distance: f32) -> f32 {
+    smoothstep(SCULPT_REACH.0, SCULPT_REACH.1, distance)
+}
+
 /// How far from a bridge the ground keeps under its deck (m), and from
 /// where it is the ground as anywhere else.
 const BRIDGE_REACH: (f32, f32) = (FLAT + 12.0, FLAT + 22.0);
@@ -33,7 +44,7 @@ const BRIDGE_REACH: (f32, f32) = (FLAT + 12.0, FLAT + 22.0);
 const UNDER_ROAD: f32 = 0.03;
 const FINE_SPACING: f32 = 3.5;
 /// Margen alrededor del circuito con rejilla fina.
-pub(super) const FINE_MARGIN: f32 = 260.0;
+pub const FINE_MARGIN: f32 = 260.0;
 /// Hasta dónde llega el terreno desde el centro del circuito.
 const EXTENT: f32 = 3500.0;
 /// Cuánto crece cada celda respecto a la anterior fuera de la zona fina,
@@ -1304,7 +1315,8 @@ impl<'a> Shaper<'a> {
             return self
                 .dams
                 .iter()
-                .fold(wild, |height, dam| dam.shape(point, height, 1.0));
+                .fold(wild, |height, dam| dam.shape(point, height, 1.0))
+                + self.shaped(point);
         };
         let track = self.track;
         let along = track.along(nearest);
@@ -1396,7 +1408,13 @@ impl<'a> Shaper<'a> {
                 .max(dam.crest.weight(along, self.lap, CREST_FADE));
             height = dam.shape(point, height, free);
         }
-        height
+        // As shaped by hand, past the walls (see `super::sculpt`).
+        height + self.shaped(point) * sculpt_reach(distance)
+    }
+
+    /// How much higher the ground was shaped by hand at `point`.
+    fn shaped(&self, point: Vec2) -> f32 {
+        self.scenery.sculpt.map_or(0.0, |sculpt| sculpt.at(point))
     }
 }
 
@@ -2108,10 +2126,14 @@ impl Builder {
 
     fn build(self, tile: f32) -> Mesh {
         let uvs: Vec<[f32; 2]> = self.uvs.iter().map(|[u, v]| [u / tile, v / tile]).collect();
-        Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::RENDER_WORLD,
-        )
+        // Kept in the main world too where the map editor may shape it
+        // in place (see `crate::editor`).
+        let usage = if crate::editor::available() {
+            RenderAssetUsages::default()
+        } else {
+            RenderAssetUsages::RENDER_WORLD
+        };
+        Mesh::new(PrimitiveTopology::TriangleList, usage)
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)

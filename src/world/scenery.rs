@@ -504,6 +504,11 @@ pub enum HouseStyle {
 // from a text as lasting (see `crate::circuits::data::parse`).
 #[serde(deny_unknown_fields, bound(deserialize = "'de: 'static"))]
 pub struct Scenery {
+    /// The ground as shaped by hand over the land the rest makes (see
+    /// [`super::sculpt`]): not in the circuit's file but in its companion,
+    /// read with it (see `crate::circuits::Circuits::parse`).
+    #[serde(skip)]
+    pub sculpt: Option<&'static super::sculpt::Sculpt>,
     pub coast: Coast,
     /// Altura de las colinas (m).
     pub hills: f32,

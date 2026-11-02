@@ -25,6 +25,7 @@ pub mod realm;
 pub mod relief;
 pub mod road;
 pub mod scenery;
+pub mod sculpt;
 pub mod sea;
 mod shadow_fade;
 pub mod shoulders;
@@ -123,6 +124,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<Finishing>()
             .init_resource::<Previewing>()
             .init_resource::<PreviewRoots>()
+            .init_resource::<BuiltTerrains>()
             .init_resource::<CircuitLoading>()
             .init_resource::<textures::WorldTextures>()
             .init_resource::<prop_pack::PropPacks>()
@@ -1029,7 +1031,14 @@ struct Builder<'w> {
     images: ResMut<'w, Assets<Image>>,
     previews: ResMut<'w, PreviewRoots>,
     relief: ResMut<'w, relief::SharedRelief>,
+    built_terrains: ResMut<'w, BuiltTerrains>,
 }
+
+/// The terrain of each circuit put in the world whole, by its index in
+/// [`Circuits`], in a development build: for the map editor to see how high
+/// the ground is where it shapes it (see [`crate::editor`]).
+#[derive(Resource, Default)]
+pub struct BuiltTerrains(pub HashMap<usize, Arc<terrain::Terrain>>);
 
 /// A circuit whose first part is in the world: where it is, the sea's
 /// mirroring material (to be given what stands round it with the rest),
@@ -1099,6 +1108,12 @@ fn build(
     };
     let (track, terrain) = (&*basis.track, &*basis.terrain);
     let split = realm::splits(scenery);
+    if stretch.is_none() && crate::editor::available() {
+        builder
+            .built_terrains
+            .0
+            .insert(basis.index, Arc::clone(&basis.terrain));
+    }
     let mut root = commands.spawn((lamps::Lamps(lamps), Transform::default(), visibility));
     match stretch {
         None => {

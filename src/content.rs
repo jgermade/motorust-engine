@@ -183,13 +183,49 @@ pub fn try_text(path: &str) -> Result<&'static str, String> {
     std::str::from_utf8(try_file(path)?).map_err(|error| format!("{path}: {error}"))
 }
 
+/// The files each pack's `pack.txt` lists, by the pack's folder, as read.
+static LISTED: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<&'static str, &'static [&'static str]>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// `path` listed in the `pack.txt` of the pack that lists `beside`, on the
+/// line after it (by the map editor, for a file it makes: a circuit's
+/// ground's shaping, see [`crate::editor`]): from now on read from that
+/// pack, and built into a release. Nothing if a pack lists it already.
+#[cfg_attr(
+    not(all(debug_assertions, not(target_arch = "wasm32"))),
+    expect(dead_code, reason = "a development build's")
+)]
+pub fn list_beside(beside: &str, path: &str) -> Result<(), String> {
+    let packs = packs();
+    if packs.iter().any(|pack| listed(pack).contains(&path)) {
+        return Ok(());
+    }
+    let pack = packs
+        .iter()
+        .find(|pack| listed(pack).contains(&beside))
+        .ok_or_else(|| format!("{beside}: in no content pack (pack.txt)"))?;
+    let list = Path::new(pack.folder).join("pack.txt");
+    let text = std::fs::read_to_string(&list).map_err(|error| format!("{}: {error}", list.display()))?;
+    let mut lines: Vec<&str> = text.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.trim() == beside)
+        .map_or(lines.len(), |at| at + 1);
+    lines.insert(at, path);
+    let mut written = lines.join("\n");
+    written.push('\n');
+    std::fs::write(&list, written).map_err(|error| format!("{}: {error}", list.display()))?;
+    LISTED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(pack.folder);
+    Ok(())
+}
+
 /// The files `pack`'s `pack.txt` lists, each a path in the pack: what a
 /// release build has built in. Read from the disk once.
 pub fn listed(pack: &Pack) -> &'static [&'static str] {
-    use std::collections::HashMap;
-    use std::sync::{LazyLock, Mutex};
-
-    static LISTED: LazyLock<Mutex<HashMap<&str, &[&str]>>> = LazyLock::new(Default::default);
     let mut listed = LISTED
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -221,7 +257,7 @@ fn on_disk_path(path: &str) -> Option<std::path::PathBuf> {
 }
 
 #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-pub use on_disk::{modified, reread, write};
+pub use on_disk::{modified, reread, write, write_bytes};
 
 /// The packs' files read from the disk, in a desktop development build:
 /// each once, kept for as long as the game runs, unless it is read again
@@ -274,9 +310,18 @@ mod on_disk {
         expect(dead_code, reason = "a development build's")
     )]
     pub fn write(path: &str, text: &str) -> Result<(), String> {
+        write_bytes(path, text.as_bytes())
+    }
+
+    /// The same, of any bytes (a circuit's ground's shaping).
+    #[cfg_attr(
+        not(all(debug_assertions, not(target_arch = "wasm32"))),
+        expect(dead_code, reason = "a development build's")
+    )]
+    pub fn write_bytes(path: &str, bytes: &[u8]) -> Result<(), String> {
         let on_disk = super::on_disk_path(path)
             .ok_or_else(|| format!("{path}: in no content pack (pack.txt)"))?;
-        std::fs::write(&on_disk, text).map_err(|error| format!("{}: {error}", on_disk.display()))
+        std::fs::write(&on_disk, bytes).map_err(|error| format!("{}: {error}", on_disk.display()))
     }
 
     /// When a file of the packs was last changed on the disk, if it is

@@ -46,6 +46,7 @@
 pub mod file;
 pub mod limits;
 pub mod profile;
+pub mod terrain;
 pub mod view;
 
 use bevy::camera::visibility::RenderLayers;
@@ -62,6 +63,7 @@ use crate::track::{BASE_ELEVATION, Layout, Track};
 use file::EditedPoint;
 use limits::Preview;
 use profile::{Mark, Panel, Span};
+use terrain::Shaping;
 use view::View;
 
 /// The flag that starts the editor, and the environment's name for it.
@@ -495,6 +497,7 @@ impl Plugin for EditorPlugin {
             return;
         }
         app.init_resource::<Editor>()
+            .init_resource::<Shaping>()
             .insert_resource(View::over(&[], 0.0))
             .init_gizmo_group::<PanelGizmos>()
             .add_systems(
@@ -511,13 +514,16 @@ impl Plugin for EditorPlugin {
                 Update,
                 (
                     follow_reloads,
+                    terrain::shaping_keys,
                     steer_view,
                     pick_and_drag,
+                    terrain::brush_the_ground,
                     edit_keys,
                     lay_out_whole,
                     place_camera,
                     draw,
                     draw_panel,
+                    terrain::draw_brush,
                     show_text,
                 )
                     .chain()
@@ -689,6 +695,7 @@ fn steer_view(
     scroll: Res<AccumulatedMouseScroll>,
     mut view: ResMut<View>,
     mut editor: ResMut<Editor>,
+    shaping: Res<Shaping>,
 ) {
     if editor.entered_with_e && !keys.pressed(KeyCode::KeyE) {
         editor.entered_with_e = false;
@@ -713,6 +720,9 @@ fn steer_view(
         MouseScrollUnit::Line => scroll.delta.y,
         MouseScrollUnit::Pixel => scroll.delta.y / 40.0,
     };
+    // Shaping the ground, Shift and Ctrl with the wheel size the brush.
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let lines = if shaping.on && (ctrl || shift) { 0.0 } else { lines };
     let zoom = lines
         + (pressed(&[KeyCode::Equal, KeyCode::NumpadAdd])
             - pressed(&[KeyCode::Minus, KeyCode::NumpadSubtract]))
@@ -750,7 +760,13 @@ fn pick_and_drag(
     camera: Query<(&Camera, &GlobalTransform), With<CameraPlayer>>,
     circuits: Res<Circuits>,
     mut editor: ResMut<Editor>,
+    shaping: Res<Shaping>,
 ) {
+    if shaping.on {
+        editor.hover = None;
+        editor.drag = Drag::None;
+        return;
+    }
     let (Ok(window), Some((camera, camera_at))) = (window.single(), camera.iter().next()) else {
         return;
     };
@@ -869,6 +885,7 @@ fn edit_keys(
     mut editor: ResMut<Editor>,
     mut view: ResMut<View>,
     mut next: ResMut<NextState<GameState>>,
+    mut shaping: ResMut<Shaping>,
 ) {
     let now = time.elapsed_secs();
     let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
@@ -889,10 +906,10 @@ fn edit_keys(
     if keys.any_just_pressed([KeyCode::Delete, KeyCode::Backspace]) {
         editor.edit.remove_selected();
     }
-    if keys.just_pressed(KeyCode::BracketLeft) {
+    if keys.just_pressed(KeyCode::BracketLeft) && !shaping.on {
         editor.edit.change_factor(-1.0);
     }
-    if keys.just_pressed(KeyCode::BracketRight) {
+    if keys.just_pressed(KeyCode::BracketRight) && !shaping.on {
         editor.edit.change_factor(1.0);
     }
     if keys.just_pressed(KeyCode::KeyT) {
@@ -901,34 +918,45 @@ fn edit_keys(
     if keys.just_pressed(KeyCode::KeyG) {
         editor.edit.change_grip(if shift { -1.0 } else { 1.0 });
     }
-    if ctrl && keys.just_pressed(KeyCode::KeyZ) {
-        if shift {
-            editor.edit.redo();
-        } else {
+    // In the terrain mode, its strokes; else the lap's changes.
+    let undo = ctrl && keys.just_pressed(KeyCode::KeyZ) && !shift;
+    let redo =
+        ctrl && (keys.just_pressed(KeyCode::KeyY) || (keys.just_pressed(KeyCode::KeyZ) && shift));
+    if shaping.on {
+        if undo {
+            shaping.undo();
+        }
+        if redo {
+            shaping.redo();
+        }
+    } else {
+        if undo {
             editor.edit.undo();
         }
-    }
-    if ctrl && keys.just_pressed(KeyCode::KeyY) {
-        editor.edit.redo();
+        if redo {
+            editor.edit.redo();
+        }
     }
     if keys.just_pressed(KeyCode::Home) {
         let positions = editor.edit.positions();
         *view = View::over(&positions, view.height);
     }
     if ctrl && keys.just_pressed(KeyCode::KeyS) {
-        editor.message = match save(&editor, &circuits) {
+        editor.message = match save(&editor, &circuits, &shaping) {
             Ok(path) => {
                 info!("editor: saved into {path}");
                 editor.edit.changed = false;
+                shaping.changed = false;
                 format!("Saved into {path}")
             }
             Err(error) => format!("Not saved: {error}"),
         };
     }
+    let unsaved = editor.edit.changed || shaping.changed;
     let step =
         keys.just_pressed(KeyCode::PageDown) as isize - keys.just_pressed(KeyCode::PageUp) as isize;
     if step != 0 {
-        if editor.edit.changed {
+        if unsaved {
             editor.message = "Unsaved changes: save them first (Ctrl+S), or undo them".into();
         } else {
             let index =
@@ -939,7 +967,7 @@ fn edit_keys(
         }
     }
     if keys.just_pressed(KeyCode::Escape) {
-        if editor.edit.changed && !editor.leaving {
+        if unsaved && !editor.leaving {
             editor.leaving = true;
             editor.message = "Unsaved changes: Esc again to leave them, Ctrl+S to save them".into();
         } else {
@@ -988,7 +1016,7 @@ fn lay_out_whole(time: Res<Time<Real>>, circuits: Res<Circuits>, mut editor: Res
 
 /// The lap written into the circuit's file on the disk (see [`file`]): its
 /// path in the content pack, or why not.
-fn save(editor: &Editor, circuits: &Circuits) -> Result<String, String> {
+fn save(editor: &Editor, circuits: &Circuits, shaping: &Shaping) -> Result<String, String> {
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     {
         let layout = &circuits.at(editor.circuit).layout;
@@ -996,15 +1024,29 @@ fn save(editor: &Editor, circuits: &Circuits) -> Result<String, String> {
             .into_iter()
             .nth(editor.circuit)
             .ok_or("the circuit is no longer in the list")?;
-        let text = std::str::from_utf8(crate::content::reread(&path)?)
-            .map_err(|error| error.to_string())?;
-        let written = write_lap(text, &editor.edit, layout)?;
-        crate::content::write(&path, &written)?;
-        Ok(path)
+        // The ground's shaping first, into the circuit's companion (listed
+        // in its pack the first time): the circuit is read again with it.
+        let mut saved = Vec::new();
+        if shaping.changed
+            && let Some(sculpt) = &shaping.sculpt
+        {
+            let companion = crate::world::sculpt::companion(&path);
+            crate::content::list_beside(&path, &companion)?;
+            crate::content::write_bytes(&companion, &sculpt.encode())?;
+            saved.push(companion);
+        }
+        if editor.edit.changed || saved.is_empty() {
+            let text = std::str::from_utf8(crate::content::reread(&path)?)
+                .map_err(|error| error.to_string())?;
+            let written = write_lap(text, &editor.edit, layout)?;
+            crate::content::write(&path, &written)?;
+            saved.insert(0, path);
+        }
+        Ok(saved.join(" and "))
     }
     #[cfg(not(all(debug_assertions, not(target_arch = "wasm32"))))]
     {
-        let _ = (editor, circuits);
+        let _ = (editor, circuits, shaping);
         Err("only a desktop development build writes circuits".into())
     }
 }
@@ -1150,16 +1192,28 @@ const BANK: Color = Color::srgba(1.0, 1.0, 1.0, 0.8);
 /// screen (see [`PanelGizmos`]).
 fn draw_panel(
     editor: Res<Editor>,
+    shaping: Res<Shaping>,
     window: Query<&Window, With<PrimaryWindow>>,
-    mut background: Query<&mut Transform, With<PanelBackground>>,
+    mut background: Query<(&mut Transform, &mut Visibility), With<PanelBackground>>,
     mut gizmos: Gizmos<PanelGizmos>,
 ) {
     let Ok(window) = window.single() else {
         return;
     };
+    // Not while shaping the ground.
+    for (_, mut visibility) in &mut background {
+        *visibility = if shaping.on {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+    }
+    if shaping.on {
+        return;
+    }
     let size = window.size();
     let panel = editor.panel(size);
-    for mut transform in &mut background {
+    for (mut transform, _) in &mut background {
         let middle = Vec2::new(
             (panel.left + panel.right) / 2.0 - size.x / 2.0,
             size.y / 2.0 - (panel.top + panel.bottom) / 2.0,
@@ -1346,6 +1400,7 @@ fn picked_text(edit: &Edit, lap: f32) -> String {
 /// is picked, the keys and what it last said.
 fn show_text(
     editor: Res<Editor>,
+    shaping: Res<Shaping>,
     circuits: Res<Circuits>,
     mut text: Query<&mut Text, With<EditorText>>,
 ) {
@@ -1373,13 +1428,14 @@ fn show_text(
         "EDITOR: {}{}\n\
          Lap {:.0} m, {} points, {} marks, {} stretches of banking; tightest bend {:.1} m (at least {:.1}), steepest grade {:.1} % (under {:.0})\n\
          {limits}\n\
+         {}\n\
          Picked: {}{hover}\n\
          Mouse: left picks and drags (points on the map, marks and banking's ends on the panel), right moves, wheel zooms. \
          WASD move, Q/E turn, R/F tilt, Tab next, N add, Del remove, B banking at the cursor, [ ] factor, T raised, G/Shift+G grip, \
          Ctrl+Z/Y undo/redo, Ctrl+S save, PgUp/PgDn circuit, Home all, Esc back\n\
          {}",
         circuit.name,
-        if editor.edit.changed {
+        if editor.edit.changed || shaping.changed {
             " (unsaved)"
         } else {
             ""
@@ -1392,6 +1448,7 @@ fn show_text(
         limits::min_radius(editor.wall),
         preview.steepest * 100.0,
         limits::MAX_GRADE * 100.0,
+        terrain::shaping_text(&shaping),
         picked_text(&editor.edit, editor.lap()),
         editor.message,
     );

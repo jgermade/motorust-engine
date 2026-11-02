@@ -125,6 +125,23 @@ pub fn files() -> Result<Vec<(String, &'static str)>, String> {
         .collect()
 }
 
+/// The ground's shaping of the circuit whose file is `path`, from its
+/// companion (see [`crate::world::sculpt::companion`]), if a pack has one;
+/// what is wrong with it, if it is wrong.
+fn sculpt_of(path: &str) -> Result<Option<&'static crate::world::sculpt::Sculpt>, String> {
+    let companion = crate::world::sculpt::companion(path);
+    if !content::packs()
+        .iter()
+        .any(|pack| content::listed(pack).contains(&companion.as_str()))
+    {
+        return Ok(None);
+    }
+    let bytes = content::try_file(&companion)?;
+    let sculpt = crate::world::sculpt::Sculpt::decode(bytes)
+        .map_err(|error| format!("{companion}: {error}"))?;
+    Ok(Some(Box::leak(Box::new(sculpt))))
+}
+
 /// The terrain's functions a game registered, by their names.
 static TERRAIN_FUNCTIONS: std::sync::RwLock<Vec<(&str, data::TerrainFunction)>> =
     std::sync::RwLock::new(Vec::new());
@@ -176,7 +193,11 @@ impl Circuits {
     pub fn parse(files: &[(String, &'static str)]) -> Result<Self, String> {
         let circuits = files
             .iter()
-            .map(|(path, text)| data::parse(path, text))
+            .map(|(path, text)| {
+                let mut circuit: Circuit = data::parse(path, text)?;
+                circuit.scenery.sculpt = sculpt_of(path)?;
+                Ok(circuit)
+            })
             .collect::<Result<Vec<Circuit>, String>>()?;
         Ok(Circuits(Vec::leak(circuits)))
     }

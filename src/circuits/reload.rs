@@ -66,9 +66,31 @@ impl Default for Watch {
 /// When the list and each of the `files` were last changed on the disk.
 #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
 fn when_changed(files: &[(String, &str)]) -> Vec<Option<std::time::SystemTime>> {
-    std::iter::once(LIST)
-        .chain(files.iter().map(|(path, _)| path.as_str()))
-        .map(crate::content::modified)
+    let companions = files
+        .iter()
+        .map(|(path, _)| crate::world::sculpt::companion(path));
+    std::iter::once(LIST.to_string())
+        .chain(files.iter().map(|(path, _)| path.clone()))
+        .chain(companions)
+        .map(|path| crate::content::modified(&path))
+        .collect()
+}
+
+/// The circuits whose companions (their ground's shaping, see
+/// [`crate::world::sculpt`]) changed between `before` and `after` (as
+/// [`when_changed`] gives them for `count` circuits).
+#[cfg(any(
+    test,
+    feature = "testing",
+    all(debug_assertions, not(target_arch = "wasm32"))
+))]
+pub fn companions_changed(
+    before: &[Option<std::time::SystemTime>],
+    after: &[Option<std::time::SystemTime>],
+    count: usize,
+) -> Vec<usize> {
+    (0..count)
+        .filter(|&index| before.get(1 + count + index) != after.get(1 + count + index))
         .collect()
 }
 
@@ -82,6 +104,9 @@ fn reread() -> Result<Vec<(String, &'static str)>, String> {
         .map(|name| {
             let path = format!("circuits/{name}");
             crate::content::reread(&path)?;
+            // Its ground's shaping too, if a pack has it (and it is read
+            // with the circuit, see `Circuits::parse`).
+            let _ = crate::content::reread(&crate::world::sculpt::companion(&path));
             let text = crate::content::try_text(&path)?;
             Ok((path, text))
         })
@@ -103,10 +128,14 @@ pub fn watch(
     if watch.every.tick(time.delta()).just_finished() {
         let modified = when_changed(&watch.files);
         if modified != watch.modified {
+            let shaped = companions_changed(&watch.modified, &modified, watch.files.len());
             watch.modified = modified;
             match reread().and_then(|files| Circuits::parse(&files).map(|new| (files, new))) {
                 Ok((files, new)) => {
                     let mut changed = changed(&watch.files, &files);
+                    changed.extend(shaped.into_iter().filter(|&index| index < files.len()));
+                    changed.sort_unstable();
+                    changed.dedup();
                     // The list may have named other files.
                     watch.modified = when_changed(&files);
                     watch.files = files;
@@ -143,6 +172,19 @@ mod tests {
             .iter()
             .map(|&(path, text)| (path.to_string(), text))
             .collect()
+    }
+
+    #[test]
+    fn a_circuit_whose_companion_changed_is_new() {
+        use std::time::{Duration, SystemTime};
+        let at = |s: u64| Some(SystemTime::UNIX_EPOCH + Duration::from_secs(s));
+        // The list, two circuits' files, their two companions.
+        let before = [at(1), at(2), at(3), None, at(5)];
+        assert!(companions_changed(&before, &before, 2).is_empty());
+        assert_eq!(companions_changed(&before, &[at(1), at(2), at(3), at(9), at(5)], 2), [0]);
+        assert_eq!(companions_changed(&before, &[at(1), at(2), at(3), None, at(6)], 2), [1]);
+        // A circuit's own file changing is not its companion's.
+        assert!(companions_changed(&before, &[at(1), at(7), at(3), None, at(5)], 2).is_empty());
     }
 
     #[test]
