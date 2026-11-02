@@ -63,7 +63,9 @@ fn in_comment(text: &str) -> Vec<bool> {
                 i += 1;
             }
         } else if bytes[i..].starts_with(b"/*") {
-            let end = text[i + 2..].find("*/").map_or(bytes.len(), |e| i + 2 + e + 2);
+            let end = text[i + 2..]
+                .find("*/")
+                .map_or(bytes.len(), |e| i + 2 + e + 2);
             comment[i..end].iter_mut().for_each(|c| *c = true);
             i = end;
         } else {

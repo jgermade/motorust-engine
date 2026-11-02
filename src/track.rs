@@ -2178,12 +2178,12 @@ pub mod tests {
         // Por debajo de este radio el muro del interior de la curva se doblaría
         // sobre sí mismo, y además no habría quien la tomase: two and a half
         // times as far as the walls stand from the centre line.
+        // (The limit the map editor shows, `crate::editor::limits`.)
         for (name, track) in every_track(circuits) {
-            let min_radius = 2.5 * track.wall();
             for index in 0..track.centerline.len() {
                 let radius = 1.0 / track.curvature(index).abs();
                 assert!(
-                    radius > min_radius,
+                    !crate::editor::limits::too_tight(track.curvature(index), track.wall()),
                     "curva de radio {radius} m en {index} de {name}"
                 );
             }
@@ -2668,7 +2668,7 @@ pub mod tests {
             for i in 0..n {
                 let grade = (track.elevation[(i + 1) % n] - track.elevation[i]) / step;
                 assert!(
-                    grade.abs() < 0.13,
+                    !crate::editor::limits::too_steep(grade),
                     "pendiente del {:.0} % en {i} de {name}",
                     grade * 100.0
                 );

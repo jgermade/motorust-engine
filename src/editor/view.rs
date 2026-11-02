@@ -163,9 +163,18 @@ mod tests {
     #[test]
     fn the_nearest_point_within_reach_is_picked() {
         let on_screen = [Some(Vec2::new(0.0, 0.0)), None, Some(Vec2::new(10.0, 0.0))];
-        assert_eq!(nearest_on_screen(&on_screen, Vec2::new(7.0, 1.0), 12.0), Some(2));
-        assert_eq!(nearest_on_screen(&on_screen, Vec2::new(3.0, 0.0), 12.0), Some(0));
-        assert_eq!(nearest_on_screen(&on_screen, Vec2::new(50.0, 0.0), 12.0), None);
+        assert_eq!(
+            nearest_on_screen(&on_screen, Vec2::new(7.0, 1.0), 12.0),
+            Some(2)
+        );
+        assert_eq!(
+            nearest_on_screen(&on_screen, Vec2::new(3.0, 0.0), 12.0),
+            Some(0)
+        );
+        assert_eq!(
+            nearest_on_screen(&on_screen, Vec2::new(50.0, 0.0), 12.0),
+            None
+        );
     }
 
     #[test]

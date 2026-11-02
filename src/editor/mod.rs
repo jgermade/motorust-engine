@@ -42,8 +42,8 @@ use bevy::window::PrimaryWindow;
 use crate::camera::CameraPlayer;
 use crate::circuits::reload::CircuitsReloaded;
 use crate::circuits::{Circuits, CurrentCircuit};
-use crate::menu::GameState;
 use crate::hud::UiFont;
+use crate::menu::GameState;
 use file::EditedPoint;
 use limits::Preview;
 use view::View;
@@ -89,12 +89,16 @@ fn circuit_named(asked: &str, names: &[&str]) -> Option<usize> {
     if asked.is_empty() {
         return None;
     }
-    asked.parse::<usize>().ok().filter(|&i| i < names.len()).or_else(|| {
-        names.iter().position(|name| {
-            let file = name.rsplit('/').next().unwrap_or(name);
-            file == asked || file.strip_suffix(".ron") == Some(asked)
+    asked
+        .parse::<usize>()
+        .ok()
+        .filter(|&i| i < names.len())
+        .or_else(|| {
+            names.iter().position(|name| {
+                let file = name.rsplit('/').next().unwrap_or(name);
+                file == asked || file.strip_suffix(".ron") == Some(asked)
+            })
         })
-    })
 }
 
 /// The control points being edited, with what was done to them, to undo.
@@ -177,13 +181,16 @@ impl Edit {
         if n == 0 {
             return;
         }
-        let from = self.selected.map_or(if step > 0 { -1 } else { 0 }, |i| i as isize);
+        let from = self
+            .selected
+            .map_or(if step > 0 { -1 } else { 0 }, |i| i as isize);
         self.selected = Some((from + step).rem_euclid(n) as usize);
     }
 
     pub fn undo(&mut self) {
         if let Some((points, selected)) = self.undo.pop() {
-            self.redo.push((std::mem::replace(&mut self.points, points), self.selected));
+            self.redo
+                .push((std::mem::replace(&mut self.points, points), self.selected));
             self.selected = selected;
             self.changed = true;
         }
@@ -191,7 +198,8 @@ impl Edit {
 
     pub fn redo(&mut self) {
         if let Some((points, selected)) = self.redo.pop() {
-            self.undo.push((std::mem::replace(&mut self.points, points), self.selected));
+            self.undo
+                .push((std::mem::replace(&mut self.points, points), self.selected));
             self.selected = selected;
             self.changed = true;
         }
@@ -228,7 +236,9 @@ impl Editor {
                     .iter()
                     .enumerate()
                     .min_by(|a, b| a.1.distance(point).total_cmp(&b.1.distance(point)))
-                    .map_or(crate::track::BASE_ELEVATION, |(i, _)| self.preview.heights[i])
+                    .map_or(crate::track::BASE_ELEVATION, |(i, _)| {
+                        self.preview.heights[i]
+                    })
             })
             .collect();
     }
@@ -349,7 +359,8 @@ fn steer_view(
     let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let pressed = |codes: [KeyCode; 2]| keys.any_pressed(codes) as i32 as f32;
     let mut pan = Vec2::new(
-        pressed([KeyCode::KeyD, KeyCode::ArrowRight]) - pressed([KeyCode::KeyA, KeyCode::ArrowLeft]),
+        pressed([KeyCode::KeyD, KeyCode::ArrowRight])
+            - pressed([KeyCode::KeyA, KeyCode::ArrowLeft]),
         pressed([KeyCode::KeyW, KeyCode::ArrowUp]) - pressed([KeyCode::KeyS, KeyCode::ArrowDown]),
     );
     if ctrl {
@@ -369,16 +380,15 @@ fn steer_view(
             - pressed([KeyCode::Minus, KeyCode::NumpadSubtract]))
             * 6.0
             * dt;
-    let turn = (pressed([KeyCode::KeyQ, KeyCode::KeyQ]) - pressed([KeyCode::KeyE, KeyCode::KeyE])) * dt;
-    let tilt = (pressed([KeyCode::KeyR, KeyCode::KeyR]) - pressed([KeyCode::KeyF, KeyCode::KeyF])) * dt;
+    let turn =
+        (pressed([KeyCode::KeyQ, KeyCode::KeyQ]) - pressed([KeyCode::KeyE, KeyCode::KeyE])) * dt;
+    let tilt =
+        (pressed([KeyCode::KeyR, KeyCode::KeyR]) - pressed([KeyCode::KeyF, KeyCode::KeyF])) * dt;
     *view = next.zoomed(zoom).turned(turn * 1.5, tilt);
 }
 
 /// The camera where the view says.
-fn place_camera(
-    view: Res<View>,
-    mut camera: Query<&mut Transform, With<CameraPlayer>>,
-) {
+fn place_camera(view: Res<View>, mut camera: Query<&mut Transform, With<CameraPlayer>>) {
     for mut transform in &mut camera {
         *transform = view.transform();
     }
@@ -482,12 +492,14 @@ fn edit_keys(
             Err(error) => format!("Not saved: {error}"),
         };
     }
-    let step = keys.just_pressed(KeyCode::PageDown) as isize - keys.just_pressed(KeyCode::PageUp) as isize;
+    let step =
+        keys.just_pressed(KeyCode::PageDown) as isize - keys.just_pressed(KeyCode::PageUp) as isize;
     if step != 0 {
         if editor.edit.changed {
             editor.message = "Unsaved changes: save them first (Ctrl+S), or undo them".into();
         } else {
-            let index = (editor.circuit as isize + step).rem_euclid(circuits.len() as isize) as usize;
+            let index =
+                (editor.circuit as isize + step).rem_euclid(circuits.len() as isize) as usize;
             current.0 = index;
             editor.open(index, &circuits, &mut view);
             editor.message.clear();
@@ -559,13 +571,21 @@ fn draw(editor: Res<Editor>, view: Res<View>, mut gizmos: Gizmos) {
     let points = &editor.edit.points;
     let place = |k: usize| {
         let p = points[k].at;
-        Vec3::new(p.x, editor.heights.get(k).copied().unwrap_or_default() + OVER, p.y)
+        Vec3::new(
+            p.x,
+            editor.heights.get(k).copied().unwrap_or_default() + OVER,
+            p.y,
+        )
     };
     gizmos.linestrip((0..=points.len()).map(|k| place(k % points.len())), HULL);
     for k in 0..points.len() {
         let picked = editor.edit.selected == Some(k);
         let color = if picked { PICKED } else { POINT };
-        gizmos.sphere(Isometry3d::from_translation(place(k)), size * if picked { 1.5 } else { 1.0 }, color);
+        gizmos.sphere(
+            Isometry3d::from_translation(place(k)),
+            size * if picked { 1.5 } else { 1.0 },
+            color,
+        );
     }
 }
 
@@ -635,7 +655,11 @@ fn show_text(
          Tab next point, N add, Del remove, Ctrl+Z/Y undo/redo, Ctrl+S save, PgUp/PgDn circuit, Home all\n\
          {}",
         circuit.name,
-        if editor.edit.changed { " (unsaved)" } else { "" },
+        if editor.edit.changed {
+            " (unsaved)"
+        } else {
+            ""
+        },
         preview.length(),
         editor.edit.points.len(),
         preview.tightest,
@@ -661,9 +685,15 @@ mod tests {
     fn the_editor_is_asked_for_with_its_flag_or_the_environment() {
         assert_eq!(asked(args(&[]), None), None);
         assert_eq!(asked(args(&["--edit"]), None), Some(String::new()));
-        assert_eq!(asked(args(&["--edit", "bahia"]), None), Some("bahia".into()));
+        assert_eq!(
+            asked(args(&["--edit", "bahia"]), None),
+            Some("bahia".into())
+        );
         assert_eq!(asked(args(&["--edit=3"]), None), Some("3".into()));
-        assert_eq!(asked(args(&["--edit", "--from", "10"]), None), Some(String::new()));
+        assert_eq!(
+            asked(args(&["--edit", "--from", "10"]), None),
+            Some(String::new())
+        );
         assert_eq!(asked(args(&[]), Some("2".into())), Some("2".into()));
     }
 
