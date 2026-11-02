@@ -150,41 +150,106 @@ fn line_of(text: &str, at: usize) -> (usize, usize) {
     (start, end)
 }
 
-/// `text`, a circuit's file, with its `control_points` as `points` are:
-/// each kept point written over its old self, those removed taken out,
-/// those added each on a line of its own after the one before it. The
-/// rest of the file (its comments too) is as it was. It fails, changing
-/// nothing, where the file's list is not as the points say it was.
-pub fn write_control_points(text: &str, points: &[EditedPoint]) -> Result<String, String> {
+/// An item of a list as the editor has it: its text, which of the file's
+/// items it was (by its place in the list), and whether it changed (an
+/// unchanged one keeps its text in the file as it was, comments inside it
+/// too).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Item {
+    pub text: String,
+    pub was: Option<usize>,
+    pub changed: bool,
+}
+
+/// `text`, a circuit's file, with its list `key` as `items` are: each kept
+/// item that changed written over its old self, those removed taken out
+/// (with their line if nothing else is on it), those added each on a line
+/// of its own after the one before it. The rest of the file (its comments
+/// too) is as it was. Where the file has no such list, it is added after
+/// the list `after` (if given), on lines of its own. It fails, changing
+/// nothing, where the file's list is not as the items say it was.
+pub fn write_list(
+    text: &str,
+    key: &str,
+    items: &[Item],
+    after: Option<&str>,
+) -> Result<String, String> {
     let comment = in_comment(text);
-    let (open, close) = list(text, "control_points", &comment)?;
+    let (open, close) = match list(text, key, &comment) {
+        Ok(found) => found,
+        Err(error) => {
+            let Some(after) = after else {
+                return Err(error);
+            };
+            if items.iter().any(|item| item.was.is_some()) {
+                return Err(error);
+            }
+            if items.is_empty() {
+                return Ok(text.to_string());
+            }
+            // A new list after the other, on lines of its own.
+            let (open, close) = list(text, after, &comment)?;
+            let (line, _) = line_of(text, open);
+            let indent = leading(text, line);
+            let rest = &text[close + 1..];
+            let comma = rest.starts_with(',') as usize;
+            let at = close + 1 + comma;
+            let lines: String = items
+                .iter()
+                .map(|item| format!("{indent}    {},\n", item.text))
+                .collect();
+            let mut out = text.to_string();
+            out.insert_str(
+                at,
+                &format!(
+                    "{}\n{indent}{key}: [\n{lines}{indent}],",
+                    if comma == 1 { "" } else { "," }
+                ),
+            );
+            return Ok(out);
+        }
+    };
     let spans = tuples(text, open, close, &comment);
-    let kept: Vec<usize> = points.iter().filter_map(|point| point.was).collect();
+    let kept: Vec<usize> = items.iter().filter_map(|item| item.was).collect();
     if kept.windows(2).any(|pair| pair[0] >= pair[1]) {
-        return Err("the points kept are out of the file's order".into());
+        return Err(format!("the {key} kept are out of the file's order"));
     }
     if kept.last().is_some_and(|&last| last >= spans.len()) {
         return Err(format!(
-            "the file has {} control points, fewer than the editor read",
+            "the file has {} {key}, fewer than the editor read",
             spans.len()
         ));
     }
-    // How the file's points are laid out: the indent of the first one's
+    let (list_line, _) = line_of(text, open);
+    let base = leading(text, list_line);
+    // On one line: the whole list written again, an item a line.
+    if !text[open..close].contains('\n') {
+        let lines: String = items
+            .iter()
+            .map(|item| {
+                let item_text = match item.was {
+                    Some(was) if !item.changed => &text[spans[was].0..spans[was].1],
+                    _ => item.text.as_str(),
+                };
+                format!("{base}    {item_text},\n")
+            })
+            .collect();
+        let mut out = text.to_string();
+        out.replace_range(open..=close, &format!("[\n{lines}{base}]"));
+        return Ok(out);
+    }
+    // How the file's items are laid out: the indent of the first one's
     // line (with none, the list's own and a step more).
-    let indent = |at: usize| {
-        let (line, _) = line_of(text, at);
-        let rest = &text[line..];
-        rest[..rest.len() - rest.trim_start_matches([' ', '\t']).len()].to_string()
-    };
     let indent = match spans.first() {
-        Some(&(start, _)) => indent(start),
-        None => format!("{}    ", indent(open)),
+        Some(&(start, _)) => leading(text, line_of(text, start).0),
+        None => format!("{base}    "),
     };
     // The changes, each a range of the text and what goes there.
     let mut changes: Vec<(usize, usize, String)> = Vec::new();
     for (index, &(start, end)) in spans.iter().enumerate() {
-        match points.iter().find(|point| point.was == Some(index)) {
-            Some(point) => changes.push((start, end, point_text(point.at))),
+        match items.iter().find(|item| item.was == Some(index)) {
+            Some(item) if item.changed => changes.push((start, end, item.text.clone())),
+            Some(_) => {}
             None => {
                 // Out, with its comma; and its line, if nothing is left on it.
                 let mut cut = end;
@@ -203,19 +268,27 @@ pub fn write_control_points(text: &str, points: &[EditedPoint]) -> Result<String
             }
         }
     }
-    // The new points, after the file's point before them (or first).
-    let mut after: Option<usize> = None;
-    let mut added: Vec<(Option<usize>, Vec2)> = Vec::new();
-    for point in points {
-        match point.was {
-            Some(was) => after = Some(was),
-            None => added.push((after, point.at)),
+    // The new items, after the file's item before them (or first).
+    let mut anchor: Option<usize> = None;
+    let mut added: Vec<(Option<usize>, &str)> = Vec::new();
+    for item in items {
+        match item.was {
+            Some(was) => anchor = Some(was),
+            None => added.push((anchor, &item.text)),
         }
     }
-    for (anchor, at) in added {
-        let line = format!("{indent}{},", point_text(at));
-        match anchor.and_then(|was| spans.get(was)) {
-            Some(&(_, end)) => {
+    let kept_after = |was: usize| items.iter().any(|item| item.was.is_some_and(|w| w > was));
+    for (anchor, item_text) in added {
+        let line = format!("{indent}{item_text},");
+        match anchor.and_then(|was| spans.get(was).map(|span| (was, span))) {
+            Some((was, &(_, end))) => {
+                // After it, on a line of its own; with a comma after it, if
+                // it had none (the last of the list).
+                let rest = &text[end..];
+                let after = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+                if !rest[after..].starts_with(',') && !kept_after(was) {
+                    changes.push((end, end, ",".into()));
+                }
                 let (_, line_end) = line_of(text, end);
                 changes.push((line_end, line_end, format!("\n{line}")));
             }
@@ -238,6 +311,33 @@ pub fn write_control_points(text: &str, points: &[EditedPoint]) -> Result<String
     Ok(out)
 }
 
+/// The spaces and tabs a line starts with, the line starting at `line`.
+fn leading(text: &str, line: usize) -> String {
+    let rest = &text[line..];
+    rest[..rest.len() - rest.trim_start_matches([' ', '\t']).len()].to_string()
+}
+
+/// `text`, a circuit's file, with its `control_points` as `points` are
+/// (see [`write_list`]); `read` the points as read from the file, to tell
+/// which moved.
+pub fn write_control_points(
+    text: &str,
+    points: &[EditedPoint],
+    read: &[Vec2],
+) -> Result<String, String> {
+    let items: Vec<Item> = points
+        .iter()
+        .map(|point| Item {
+            text: point_text(point.at),
+            was: point.was,
+            changed: point
+                .was
+                .is_none_or(|was| read.get(was).is_none_or(|&r| r.distance(point.at) > 0.004)),
+        })
+        .collect();
+    write_list(text, "control_points", &items, None)
+}
+
 #[cfg(any(test, feature = "testing"))]
 pub mod tests {
     use super::*;
@@ -257,6 +357,13 @@ pub mod tests {
     ),
 )
 ";
+
+    const READ: [Vec2; 4] = [
+        Vec2::new(0.0, 0.0),
+        Vec2::new(10.0, -20.0),
+        Vec2::new(30.5, -40.25),
+        Vec2::new(50.0, 0.0),
+    ];
 
     fn kept(points: &[(f32, f32)]) -> Vec<EditedPoint> {
         points
@@ -281,13 +388,13 @@ pub mod tests {
     #[test]
     fn unchanged_points_leave_the_file_as_it_was() {
         let points = kept(&[(0.0, 0.0), (10.0, -20.0), (30.5, -40.25), (50.0, 0.0)]);
-        assert_eq!(write_control_points(FILE, &points).unwrap(), FILE);
+        assert_eq!(write_control_points(FILE, &points, &READ).unwrap(), FILE);
     }
 
     #[test]
     fn a_moved_point_is_written_in_its_place_with_its_comments() {
         let points = kept(&[(0.0, 0.0), (12.0, -21.5), (30.5, -40.25), (50.0, 0.0)]);
-        let out = write_control_points(FILE, &points).unwrap();
+        let out = write_control_points(FILE, &points, &READ).unwrap();
         assert_eq!(out, FILE.replace("(10.0, -20.0)", "(12.0, -21.5)"));
     }
 
@@ -295,12 +402,12 @@ pub mod tests {
     fn a_removed_point_goes_with_its_line() {
         let mut points = kept(&[(0.0, 0.0), (10.0, -20.0), (30.5, -40.25), (50.0, 0.0)]);
         points.remove(2);
-        let out = write_control_points(FILE, &points).unwrap();
+        let out = write_control_points(FILE, &points, &READ).unwrap();
         assert_eq!(out, FILE.replace("            (30.5, -40.25),\n", ""));
         // One with a comment on its line leaves the comment.
         let mut points = kept(&[(0.0, 0.0), (10.0, -20.0), (30.5, -40.25), (50.0, 0.0)]);
         points.remove(1);
-        let out = write_control_points(FILE, &points).unwrap();
+        let out = write_control_points(FILE, &points, &READ).unwrap();
         assert_eq!(out, FILE.replace("(10.0, -20.0), // and", " // and"));
     }
 
@@ -321,7 +428,7 @@ pub mod tests {
                 was: None,
             },
         );
-        let out = write_control_points(FILE, &points).unwrap();
+        let out = write_control_points(FILE, &points, &READ).unwrap();
         let expected = FILE
             .replace(
                 "// and one after it\n",
@@ -338,10 +445,80 @@ pub mod tests {
     fn what_the_file_has_not_is_refused() {
         let mut points = kept(&[(0.0, 0.0), (10.0, -20.0), (30.5, -40.25), (50.0, 0.0)]);
         points[3].was = Some(7);
-        assert!(write_control_points(FILE, &points).is_err());
+        assert!(write_control_points(FILE, &points, &READ).is_err());
         points.swap(1, 2);
-        assert!(write_control_points(FILE, &points).is_err());
-        assert!(write_control_points("(layout: ())", &[]).is_err());
+        assert!(write_control_points(FILE, &points, &READ).is_err());
+        assert!(write_control_points("(layout: ())", &[], &[]).is_err());
+    }
+
+    fn item(text: &str, was: Option<usize>, changed: bool) -> Item {
+        Item {
+            text: text.into(),
+            was,
+            changed,
+        }
+    }
+
+    #[test]
+    fn a_list_on_one_line_is_written_an_item_a_line() {
+        let items = [
+            item("(0.0, 0.0)", Some(0), false),
+            item("(120.0, 4.5)", None, true),
+        ];
+        let out = write_list(FILE, "elevation", &items, None).unwrap();
+        assert_eq!(
+            out,
+            FILE.replace(
+                "elevation: [(0.0, 0.0)],",
+                "elevation: [\n            (0.0, 0.0),\n            (120.0, 4.5),\n        ],"
+            )
+        );
+    }
+
+    #[test]
+    fn an_item_added_after_the_last_gives_it_its_comma() {
+        let text =
+            "(\n    elevation: [\n        (0.0, 0.0),\n        (50.0, 2.0) // the top\n    ],\n)\n";
+        let items = [
+            item("(0.0, 0.0)", Some(0), false),
+            item("(50.0, 2.0)", Some(1), false),
+            item("(80.0, 1.0)", None, true),
+        ];
+        let out = write_list(text, "elevation", &items, None).unwrap();
+        assert_eq!(
+            out,
+            "(\n    elevation: [\n        (0.0, 0.0),\n        (50.0, 2.0), // the top\n        (80.0, 1.0),\n    ],\n)\n"
+        );
+    }
+
+    #[test]
+    fn a_list_the_file_has_not_is_added_after_another() {
+        let items = [item("(from: 10.0, to: 20.0, factor: 1.5)", None, true)];
+        let out = write_list(FILE, "banking", &items, Some("elevation")).unwrap();
+        assert_eq!(
+            out,
+            FILE.replace(
+                "elevation: [(0.0, 0.0)],",
+                "elevation: [(0.0, 0.0)],\n        banking: [\n            (from: 10.0, to: 20.0, factor: 1.5),\n        ],"
+            )
+        );
+        // Nothing to add, nothing added; and none where no other is.
+        assert_eq!(
+            write_list(FILE, "banking", &[], Some("elevation")).unwrap(),
+            FILE
+        );
+        assert!(write_list(FILE, "banking", &items, None).is_err());
+    }
+
+    #[test]
+    fn an_unchanged_item_keeps_its_text_and_comments_inside_it() {
+        let text = "(banking: [\n    (\n        from: 1.0,\n        // why\n        to: 2.0,\n        factor: 2.5,\n    ),\n    (from: 2.0, to: 3.0, factor: 0.0),\n])";
+        let items = [
+            item("(from: 1.0, to: 2.0, factor: 2.5)", Some(0), false),
+            item("(from: 2.0, to: 4.0, factor: 0.0)", Some(1), true),
+        ];
+        let out = write_list(text, "banking", &items, None).unwrap();
+        assert_eq!(out, text.replace("to: 3.0", "to: 4.0"));
     }
 
     /// Every circuit of `files` (each its path and its text), written with
@@ -357,7 +534,11 @@ pub mod tests {
                 .enumerate()
                 .map(|(was, &at)| EditedPoint { at, was: Some(was) })
                 .collect();
-            assert_eq!(write_control_points(text, &same).unwrap(), *text, "{path}");
+            assert_eq!(
+                write_control_points(text, &same, points).unwrap(),
+                *text,
+                "{path}"
+            );
             let moved: Vec<EditedPoint> = same
                 .iter()
                 .map(|point| EditedPoint {
@@ -365,7 +546,8 @@ pub mod tests {
                     ..*point
                 })
                 .collect();
-            let out: &'static str = String::leak(write_control_points(text, &moved).unwrap());
+            let out: &'static str =
+                String::leak(write_control_points(text, &moved, points).unwrap());
             let read: crate::circuits::Circuit = crate::circuits::data::parse(path, out).unwrap();
             assert_eq!(read.layout.control_points.len(), points.len(), "{path}");
             for (a, b) in read.layout.control_points.iter().zip(points) {

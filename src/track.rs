@@ -1606,6 +1606,15 @@ impl Track {
         Vec3::new(ground.x, height, ground.y)
     }
 
+    /// How much the road banks at point `index` of the lap's centre line
+    /// (rad, positive rising to the right: its left side lower).
+    pub fn bank_at(&self, index: usize) -> f32 {
+        self.bank
+            .get(self.wrap(index as isize))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
     /// Alturas de la línea central, una por punto: para calcular el terreno.
     pub fn elevations(&self) -> &[f32] {
         &self.elevation
@@ -2638,16 +2647,14 @@ pub mod tests {
         // bumps).
         for circuit in circuits.iter() {
             let track = Track::new(&circuit.layout);
-            let (n, step, speed) = (track.sample_count(), track.step_length(), 30.0f32);
-            let felt = |i: usize, lateral: f32| {
-                let h = |i: usize| track.surface_point(i % n, lateral).y;
-                (h(i - 1) - 2.0 * h(i) + h(i + 1)) / (step * step) * speed * speed
-            };
+            // (As the map editor shows them, `crate::editor::limits`.)
+            use crate::editor::limits::{BUMP_LATERAL, MAX_BUMP, bump_off_middle};
+            let (n, step) = (track.sample_count(), track.step_length());
             for i in 1..n {
-                for lateral in [-4.0, 4.0] {
-                    let off = (felt(i, lateral) - felt(i, 0.0)).abs();
+                for lateral in [-BUMP_LATERAL, BUMP_LATERAL] {
+                    let off = bump_off_middle(&track, i, lateral);
                     assert!(
-                        off < 0.6 * 9.81,
+                        off < MAX_BUMP,
                         "{}: {off} m/s² at {} m, {lateral} m off the middle",
                         circuit.name,
                         i as f32 * step

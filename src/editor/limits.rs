@@ -13,7 +13,7 @@
 use bevy::prelude::*;
 
 use crate::geometry::{heading_of, wrap_angle};
-use crate::track::{BASE_ELEVATION, SAMPLE_SPACING, closed_curve, profile_height};
+use crate::track::{BASE_ELEVATION, SAMPLE_SPACING, Track, closed_curve, profile_height};
 
 /// Under this many times as far as the walls stand from the middle, a bend's
 /// inside wall would fold over itself, and no one could take it.
@@ -62,6 +62,29 @@ pub fn too_steep(grade: f32) -> bool {
     grade.abs() >= MAX_GRADE
 }
 
+/// How fast (m/s), and how far from the middle (m), a bump off the middle of
+/// the road is felt, and the most it may be felt (m/s²) more than in the
+/// middle: as the tests check (`the_banking_puts_no_bumps_off_the_middle_of_
+/// the_road`), where a raised bank that stopped dead at its most, or swung
+/// from side to side through esses, rocked the road.
+pub const BUMP_SPEED: f32 = 30.0;
+pub const BUMP_LATERAL: f32 = 4.0;
+pub const MAX_BUMP: f32 = 0.6 * 9.81;
+
+/// How much more sharply (m/s²) the road rises or falls under a bike at
+/// [`BUMP_SPEED`] at point `index` of `track`'s lap, `lateral` m off its
+/// middle, than in its middle.
+pub fn bump_off_middle(track: &Track, index: usize, lateral: f32) -> f32 {
+    let n = track.sample_count();
+    let step = track.step_length();
+    let felt = |lateral: f32| {
+        let h = |i: usize| track.surface_point(i % n, lateral).y;
+        let i = index % n + n;
+        (h(i - 1) - 2.0 * h(i) + h(i + 1)) / (step * step) * BUMP_SPEED * BUMP_SPEED
+    };
+    (felt(lateral) - felt(0.0)).abs()
+}
+
 /// A lap laid out from its control points and height profile, as the game
 /// would lay it, and where it breaks the limits.
 #[derive(Clone, Debug, Default)]
@@ -80,6 +103,11 @@ pub struct Preview {
     /// The tightest bend's radius (m) and the steepest grade (signed).
     pub tightest: f32,
     pub steepest: f32,
+    /// As the game lays the whole of it ([`Self::of_track`]), with its
+    /// banking: the bank at each point (rad), and where it is felt as a
+    /// bump off the middle. Empty from the points and profile alone.
+    pub bank: Vec<f32>,
+    pub bumps: Vec<bool>,
 }
 
 impl Preview {
@@ -125,6 +153,43 @@ impl Preview {
             step,
             tightest,
             steepest,
+            bank: Vec::new(),
+            bumps: Vec::new(),
+        }
+    }
+
+    /// The lap as the game lays it, banking and all: its heights those of
+    /// its middle (where it banks raised, lifted).
+    pub fn of_track(track: &Track) -> Self {
+        let n = track.sample_count();
+        let step = track.step_length();
+        let line: Vec<Vec2> = track.centerline().to_vec();
+        let heights: Vec<f32> = (0..n).map(|i| track.surface_point(i, 0.0).y).collect();
+        let curvatures: Vec<f32> = (0..n).map(|i| track.curvature(i)).collect();
+        let grades: Vec<f32> = (0..n).map(|i| grade(&heights, step, i)).collect();
+        let wall = track.wall();
+        Self {
+            tight: curvatures.iter().map(|&c| too_tight(c, wall)).collect(),
+            steep: grades.iter().map(|&g| too_steep(g)).collect(),
+            tightest: curvatures
+                .iter()
+                .map(|c| 1.0 / c.abs().max(1e-6))
+                .fold(f32::INFINITY, f32::min),
+            steepest: grades.iter().copied().fold(
+                0.0,
+                |most: f32, g| if g.abs() > most.abs() { g } else { most },
+            ),
+            bank: (0..n).map(|i| track.bank_at(i)).collect(),
+            bumps: (0..n)
+                .map(|i| {
+                    [-BUMP_LATERAL, BUMP_LATERAL]
+                        .iter()
+                        .any(|&lateral| bump_off_middle(track, i, lateral) >= MAX_BUMP)
+                })
+                .collect(),
+            line,
+            heights,
+            step,
         }
     }
 
@@ -135,7 +200,7 @@ impl Preview {
 
     /// Whether it keeps every limit.
     pub fn keeps_the_limits(&self) -> bool {
-        !self.tight.contains(&true) && !self.steep.contains(&true)
+        !self.tight.contains(&true) && !self.steep.contains(&true) && !self.bumps.contains(&true)
     }
 
     /// The curvature at point `index` of the centre line (see
@@ -209,6 +274,22 @@ mod tests {
             7.5,
         );
         assert!(gentle.keeps_the_limits());
+    }
+
+    #[test]
+    fn the_whole_lap_as_the_game_lays_it_has_its_banking_and_no_bumps() {
+        let circuit = &crate::testing::DEMO[0];
+        let track = Track::new(&circuit.layout);
+        let whole = Preview::of_track(&track);
+        let plain = Preview::new(
+            circuit.layout.control_points,
+            circuit.layout.elevation,
+            circuit.layout.wall,
+        );
+        assert_eq!(whole.line.len(), plain.line.len());
+        assert!(whole.bank.iter().any(|b| b.abs() > 0.05));
+        assert!(!whole.bumps.contains(&true));
+        assert!(whole.keeps_the_limits());
     }
 
     #[test]
