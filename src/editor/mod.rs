@@ -37,6 +37,7 @@ pub mod view;
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
+use bevy::camera::visibility::RenderLayers;
 use bevy::window::PrimaryWindow;
 
 use crate::camera::CameraPlayer;
@@ -313,6 +314,7 @@ fn enter(
     mut editor: ResMut<Editor>,
     mut view: ResMut<View>,
     mut fog: Query<&mut DistanceFog, With<CameraPlayer>>,
+    mut gizmos: ResMut<GizmoConfigStore>,
 ) {
     editor.open(current.0, &circuits, &mut view);
     for mut fog in &mut fog {
@@ -321,7 +323,18 @@ fn enter(
             end: 6000.0,
         };
     }
+    // Drawn by the world's camera only, out of a race always on the layer
+    // seen from above (`crate::world::realm`); the interface's would draw
+    // them too, flattened. Over what is there.
+    let (config, _) = gizmos.config_mut::<DefaultGizmoConfigGroup>();
+    config.render_layers = RenderLayers::layer(GIZMO_LAYER);
+    config.depth_bias = -1.0;
+    config.line.width = 3.0;
 }
+
+/// The layer the editor's lines and points are drawn on, which only the
+/// world's camera sees.
+const GIZMO_LAYER: usize = crate::world::realm::OVERVIEW_LAYER;
 
 /// The circuits read again (saved by the editor, or by hand): the one
 /// edited opened afresh, unless it has changes of its own not saved.
