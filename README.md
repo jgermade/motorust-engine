@@ -81,8 +81,25 @@ raised or grips harder) and the bank itself.
   turn and R / F tilt; Tab goes to the next of what is picked; Page Up /
   Page Down to another circuit; Home shows all of it.
 
-What stands along the road, the stretches of the scenery, the branches
-and the crests the bike takes off over are still to come.
+M switches to the terrain mode, as a theme park game's terrain editor: a
+round brush on the ground under the cursor (its edge and the ring within
+which it works all the way, coloured by its tool) that, while the left
+button is held, raises (1), lowers (2), smooths (3), flattens to where the
+stroke began (4) or restores the land as the scenery makes it (5); [ and ]
+or Shift and the wheel size it, , and . or Ctrl and the wheel make it
+weaker or stronger; Ctrl+Z and Ctrl+Y undo and redo a stroke. The ground's
+meshes are shaped in place as it goes; the ground beside the roads is left
+to them (shaped only from just past their walls). Saved, the shaping goes
+into the circuit's companion, `circuits/NAME.terrain` beside
+`circuits/NAME.ron` (listed in its pack's `pack.txt` the first time), a
+grid of heights 2 m apart over the land the scenery makes
+(`src/world/sculpt.rs`), and the circuit is built anew with it: its ground's
+kinds (a steep hill is rock), its trees and its grass where the ground now
+is.
+
+What stands along the road, painting the ground's kinds, the stretches of
+the scenery, the branches and the crests the bike takes off over are still
+to come.
 
 ## Tools
 
