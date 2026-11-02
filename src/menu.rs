@@ -40,6 +40,8 @@ pub enum GameState {
     /// Elegir moto y piloto.
     Select,
     Race,
+    /// The map editor ([`crate::editor`]), started with `--edit`.
+    Editor,
 }
 
 /// La moto que ha elegido el jugador en modo individual: su índice en [`Roster`].

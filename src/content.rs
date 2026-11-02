@@ -221,7 +221,7 @@ fn on_disk_path(path: &str) -> Option<std::path::PathBuf> {
 }
 
 #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-pub use on_disk::{modified, reread};
+pub use on_disk::{modified, reread, write};
 
 /// The packs' files read from the disk, in a desktop development build:
 /// each once, kept for as long as the game runs, unless it is read again
@@ -264,6 +264,19 @@ mod on_disk {
         let bytes = read(path)?;
         read_so_far().insert(path.to_string(), bytes);
         Ok(bytes)
+    }
+
+    /// A file of the packs written on the disk, where the first pack that
+    /// lists it has it (by the map editor, see [`crate::editor`]): the
+    /// circuits' watch reads it again (`crate::circuits::reload`).
+    #[cfg_attr(
+        not(all(debug_assertions, not(target_arch = "wasm32"))),
+        expect(dead_code, reason = "a development build's")
+    )]
+    pub fn write(path: &str, text: &str) -> Result<(), String> {
+        let on_disk = super::on_disk_path(path)
+            .ok_or_else(|| format!("{path}: in no content pack (pack.txt)"))?;
+        std::fs::write(&on_disk, text).map_err(|error| format!("{}: {error}", on_disk.display()))
     }
 
     /// When a file of the packs was last changed on the disk, if it is

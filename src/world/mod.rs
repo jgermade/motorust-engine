@@ -561,7 +561,7 @@ fn menu_distance(a: usize, b: usize, count: usize) -> usize {
 /// the welcome screen.
 fn preparing_in_the_menus(state: Option<Res<State<GameState>>>) -> bool {
     match state.as_deref().map(State::get) {
-        Some(GameState::Race) | None => false,
+        Some(GameState::Race) | Some(GameState::Editor) | None => false,
         Some(GameState::Tracks) => true,
         Some(_) => !WEB,
     }

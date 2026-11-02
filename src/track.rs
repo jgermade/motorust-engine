@@ -1793,7 +1793,7 @@ fn open_profile(points: &[(f32, f32)], length: f32, s: f32) -> f32 {
 
 /// Altura de un perfil cerrado de `lap` metros en el punto `s`, con una curva
 /// suave (Hermite con tangentes de Catmull-Rom) que pasa por los puntos dados.
-fn profile_height(points: &[(f32, f32)], lap: f32, s: f32) -> f32 {
+pub fn profile_height(points: &[(f32, f32)], lap: f32, s: f32) -> f32 {
     let n = points.len();
     // Puntos del perfil como si se repitiera vuelta tras vuelta.
     let at = |i: isize| {
