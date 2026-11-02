@@ -54,20 +54,35 @@ game's tests to run on its own content, with the `testing` feature.
 
 ## The map editor
 
-In a desktop development build, `cargo run -- --edit` (or `--edit bahia`,
-a circuit by its file's name or its place in the menu; or
-`MOTORUST_EDIT=bahia`) opens the map editor (`src/editor/`) on the
-circuit, seen from above in its own world: its control points and the
-centre line through them as the game would lay it, red where a bend is too
-tight or a grade too steep (the limits the tests check). Pick a point and
-drag it with the mouse, add one after it (N) or take it out (Delete), undo
-and redo (Ctrl+Z, Ctrl+Y), and save (Ctrl+S): the points are written into
-the circuit's file in place of its own, the rest of the file as it was (its
-comments too), and the circuit is read again and built anew. The right
-button or W A S D move over the ground, the wheel zooms, Q / E turn and
-R / F tilt; Page Up / Page Down go to another circuit, Home shows all of
-it. So far it edits the lap's control points only: the heights, banking,
-stretches and what stands along the road are to come.
+In a desktop development build (a game's `make up`, or `cargo run` here),
+the map editor (`src/editor/`) is entered from the tracks menu with E, on
+the circuit chosen, and left with Esc; or at start-up with `--edit` (or
+`--edit bahia`, a circuit by its file's name or its place in the menu; or
+`MOTORUST_EDIT=bahia`). It shows the circuit from above in its own world:
+its control points and the lap through them as the game lays it, its walls
+banked as they are, red where a bend is too tight or a grade too steep and
+orange where its banking is felt as a bump off the middle of the road (the
+limits the tests check). Along the bottom a panel shows the lap's height
+from end to end, with the marks of its profile, and under it the
+stretches of banking (each a bar as high as its factor, orange where it is
+raised or grips harder) and the bank itself.
+
+- On the map, pick a control point and drag it; on the panel, a mark (its
+  height and where it is along the lap) or a stretch's end.
+- N adds a point or mark halfway to the next, or splits a stretch; Delete
+  takes out what is picked; B adds a stretch of banking where the cursor
+  is on the panel's band; [ and ] change its factor, T raises it on
+  supports or not, G and Shift+G its grip.
+- Ctrl+Z and Ctrl+Y undo and redo; Ctrl+S saves into the circuit's file,
+  each list in place of its own (the banking's added after the profile if
+  the file had none), the rest of the file as it was, its comments too;
+  the circuit is then read again and built anew.
+- The right button or W A S D move over the ground, the wheel zooms, Q / E
+  turn and R / F tilt; Tab goes to the next of what is picked; Page Up /
+  Page Down to another circuit; Home shows all of it.
+
+What stands along the road, the stretches of the scenery, the branches
+and the crests the bike takes off over are still to come.
 
 ## Tools
 

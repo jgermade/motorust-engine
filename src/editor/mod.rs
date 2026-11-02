@@ -419,6 +419,9 @@ pub struct Editor {
     hover: Option<f32>,
     /// Esc pressed once with changes not saved.
     leaving: bool,
+    /// E (which turns the view) still held from entering the editor with
+    /// it, from the tracks menu: not turning until it is let go.
+    entered_with_e: bool,
     pub message: String,
 }
 
@@ -563,6 +566,7 @@ struct FogBefore(FogFalloff);
 fn enter(
     mut commands: Commands,
     time: Res<Time<Real>>,
+    keys: Res<ButtonInput<KeyCode>>,
     current: Res<CurrentCircuit>,
     circuits: Res<Circuits>,
     mut editor: ResMut<Editor>,
@@ -572,6 +576,7 @@ fn enter(
 ) {
     editor.open(current.0, &circuits, &mut view, time.elapsed_secs());
     editor.message.clear();
+    editor.entered_with_e = keys.pressed(KeyCode::KeyE);
     for mut fog in &mut fog {
         commands.insert_resource(FogBefore(fog.falloff.clone()));
         fog.falloff = FogFalloff::Linear {
@@ -683,7 +688,11 @@ fn steer_view(
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     mut view: ResMut<View>,
+    mut editor: ResMut<Editor>,
 ) {
+    if editor.entered_with_e && !keys.pressed(KeyCode::KeyE) {
+        editor.entered_with_e = false;
+    }
     let dt = time.delta_secs();
     let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let pressed = |codes: &[KeyCode]| keys.any_pressed(codes.iter().copied()) as i32 as f32;
@@ -709,7 +718,12 @@ fn steer_view(
             - pressed(&[KeyCode::Minus, KeyCode::NumpadSubtract]))
             * 6.0
             * dt;
-    let turn = (pressed(&[KeyCode::KeyQ]) - pressed(&[KeyCode::KeyE])) * dt;
+    let e = if editor.entered_with_e {
+        0.0
+    } else {
+        pressed(&[KeyCode::KeyE])
+    };
+    let turn = (pressed(&[KeyCode::KeyQ]) - e) * dt;
     let tilt = (pressed(&[KeyCode::KeyR]) - pressed(&[KeyCode::KeyF])) * dt;
     *view = next.zoomed(zoom).turned(turn * 1.5, tilt);
 }
