@@ -1381,11 +1381,14 @@ pub mod tests {
             .collect();
         assert_eq!(preparing, [1]);
 
-        // ...and arrive, hidden, as they are ready.
+        // ...and arrive, hidden, as they are ready. That they arrive is what
+        // is checked, not how soon: a game's eight circuits, prepared while
+        // every other test runs on a CI runner's few cores, took over two
+        // minutes (the bound only stops a test that would wait for ever).
         let started = std::time::Instant::now();
         while roots_query.iter(app.world()).count() < circuits.len() {
             assert!(
-                started.elapsed().as_secs() < 120,
+                started.elapsed().as_secs() < 600,
                 "the circuits never arrive"
             );
             app.update();
