@@ -576,6 +576,13 @@ fn draw(editor: Res<Editor>, view: Res<View>, mut gizmos: Gizmos) {
         let broken = preview.tight[i] || preview.steep[i];
         gizmos.line(at(i, 0.0), at(j, 0.0), if broken { BROKEN } else { LAP });
     }
+    // Where it breaks the limits, marked across the road, to be seen from
+    // afar.
+    for i in (0..n).step_by(3) {
+        if preview.tight[i] || preview.steep[i] {
+            gizmos.line(at(i, -editor.wall), at(i, editor.wall), BROKEN);
+        }
+    }
     for side in [-editor.wall, editor.wall] {
         gizmos.linestrip((0..=n).map(|i| at(i % n, side)), WALLS);
     }
@@ -645,7 +652,7 @@ fn show_text(
         "within the limits".to_string()
     } else {
         format!(
-            "{} m too tight, {} m too steep (red)",
+            "{:.0} m too tight, {:.0} m too steep (red)",
             tight as f32 * preview.step,
             steep as f32 * preview.step
         )
