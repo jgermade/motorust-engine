@@ -496,7 +496,12 @@ impl Plugin for EditorPlugin {
             .init_gizmo_group::<PanelGizmos>()
             .add_systems(
                 OnEnter(GameState::Editor),
-                (enter, spawn_text, spawn_panel_camera),
+                (
+                    enter,
+                    spawn_text,
+                    spawn_panel_camera,
+                    spawn_panel_background,
+                ),
             )
             .add_systems(OnExit(GameState::Editor), leave)
             .add_systems(
@@ -624,6 +629,20 @@ fn spawn_panel_camera(mut commands: Commands) {
             ..default()
         },
         Msaa::Off,
+        RenderLayers::layer(PANEL_LAYER),
+    ));
+}
+
+/// The panel's background: dark, a little see-through, under its lines.
+#[derive(Component)]
+struct PanelBackground;
+
+fn spawn_panel_background(mut commands: Commands) {
+    commands.spawn((
+        DespawnOnExit(GameState::Editor),
+        PanelBackground,
+        Sprite::from_color(Color::srgba(0.0, 0.0, 0.0, 0.6), Vec2::ONE),
+        Transform::from_xyz(0.0, 0.0, -1.0),
         RenderLayers::layer(PANEL_LAYER),
     ));
 }
@@ -1118,6 +1137,7 @@ const BANK: Color = Color::srgba(1.0, 1.0, 1.0, 0.8);
 fn draw_panel(
     editor: Res<Editor>,
     window: Query<&Window, With<PrimaryWindow>>,
+    mut background: Query<&mut Transform, With<PanelBackground>>,
     mut gizmos: Gizmos<PanelGizmos>,
 ) {
     let Ok(window) = window.single() else {
@@ -1125,6 +1145,16 @@ fn draw_panel(
     };
     let size = window.size();
     let panel = editor.panel(size);
+    for mut transform in &mut background {
+        let middle = Vec2::new(
+            (panel.left + panel.right) / 2.0 - size.x / 2.0,
+            size.y / 2.0 - (panel.top + panel.bottom) / 2.0,
+        );
+        let extent = Vec2::new(panel.right - panel.left, panel.bottom - panel.top)
+            + Vec2::splat(2.0 * profile::PANEL_MARGIN);
+        *transform =
+            Transform::from_translation(middle.extend(-1.0)).with_scale(extent.extend(1.0));
+    }
     let preview = &editor.preview;
     let n = preview.line.len();
     if n < 2 {
