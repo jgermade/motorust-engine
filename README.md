@@ -52,6 +52,23 @@ own content. Its checks of
 circuits and bikes (each `NAME_on` in a module's tests) are there for a
 game's tests to run on its own content, with the `testing` feature.
 
+## The map editor
+
+In a desktop development build, `cargo run -- --edit` (or `--edit bahia`,
+a circuit by its file's name or its place in the menu; or
+`MOTORUST_EDIT=bahia`) opens the map editor (`src/editor/`) on the
+circuit, seen from above in its own world: its control points and the
+centre line through them as the game would lay it, red where a bend is too
+tight or a grade too steep (the limits the tests check). Pick a point and
+drag it with the mouse, add one after it (N) or take it out (Delete), undo
+and redo (Ctrl+Z, Ctrl+Y), and save (Ctrl+S): the points are written into
+the circuit's file in place of its own, the rest of the file as it was (its
+comments too), and the circuit is read again and built anew. The right
+button or W A S D move over the ground, the wheel zooms, Q / E turn and
+R / F tilt; Page Up / Page Down go to another circuit, Home shows all of
+it. So far it edits the lap's control points only: the heights, banking,
+stretches and what stands along the road are to come.
+
 ## Tools
 
 | Tool | What it does |

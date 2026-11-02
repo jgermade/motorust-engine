@@ -35,9 +35,9 @@ pub mod file;
 pub mod limits;
 pub mod view;
 
+use bevy::camera::visibility::RenderLayers;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
-use bevy::camera::visibility::RenderLayers;
 use bevy::window::PrimaryWindow;
 
 use crate::camera::CameraPlayer;
@@ -346,7 +346,10 @@ fn follow_reloads(
 ) {
     for reloaded in reloads.read() {
         if reloaded.0.contains(&editor.circuit) && editor.circuit < circuits.len() {
-            info!("editor: circuit read again, changed: {}", editor.edit.changed);
+            info!(
+                "editor: circuit read again, changed: {}",
+                editor.edit.changed
+            );
             if editor.edit.changed {
                 editor.message = "The file changed on the disk; not read (unsaved changes)".into();
             } else {
