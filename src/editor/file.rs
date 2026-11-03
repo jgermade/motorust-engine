@@ -220,6 +220,15 @@ pub fn write_list(
             spans.len()
         ));
     }
+    // Nothing changed, added or taken out: the file as it was.
+    let untouched = items.len() == spans.len()
+        && items
+            .iter()
+            .enumerate()
+            .all(|(index, item)| item.was == Some(index) && !item.changed);
+    if untouched {
+        return Ok(text.to_string());
+    }
     let (list_line, _) = line_of(text, open);
     let base = leading(text, list_line);
     // On one line: the whole list written again, an item a line.
