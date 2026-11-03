@@ -54,6 +54,15 @@ game's tests to run on its own content, with the `testing` feature.
 
 ## The map editor
 
+Its interface (`src/editor/ui.rs`): a bar along the top with the circuit,
+its lap's figures, the modes and the buttons for saving, undoing, redoing,
+the help, leaving, the last and next circuit and the whole circuit in view;
+down the left a column of buttons for what the mode in use does; on every
+button its key, and beside it what it does. Tab opens a window with all of
+the keys, the mouse's too. The keys and the buttons come from one table
+(`BINDINGS`), so the legends never say other than what the keys do.
+
+
 In a desktop development build (a game's `make up`, or `cargo run` here),
 the map editor (`src/editor/`) is entered from the tracks menu with E, on
 the circuit chosen, and left with Esc; or at start-up with `--edit` (or

@@ -535,17 +535,23 @@ pub const BINDINGS: &[Binding] = &[
 ];
 
 /// What the mouse and the camera's keys do, for the legend (no buttons).
-const MOUSE: &[(&str, &str, &str)] = &[
+const MOUSE: &[(&str, &str, &str, &str)] = &[
     (
         "Clic izq.",
+        "Left click",
         "Elegir y arrastrar (puntos en el mapa; marcas y tramos en el panel; el pincel; lo de la carretera)",
         "Pick and drag (points on the map; marks and stretches on the panel; the brush; what stands by the road)",
     ),
-    ("Clic der.", "Mover la vista", "Move the view"),
-    ("Rueda", "Acercar / alejar", "Zoom in / out"),
-    ("W A S D", "Mover la vista", "Move the view"),
-    ("Q / E", "Girar", "Turn"),
-    ("R / F", "Inclinar", "Tilt"),
+    (
+        "Clic der.",
+        "Right click",
+        "Mover la vista",
+        "Move the view",
+    ),
+    ("Rueda", "Wheel", "Acercar / alejar", "Zoom in / out"),
+    ("W A S D", "W A S D", "Mover la vista", "Move the view"),
+    ("Q / E", "Q / E", "Girar", "Turn"),
+    ("R / F", "R / F", "Inclinar", "Tilt"),
 ];
 
 impl Binding {
@@ -588,7 +594,7 @@ pub fn key_name(key: KeyCode, language: Language) -> String {
         KeyCode::Tab => "Tab".into(),
         KeyCode::Space => if spanish { "Espacio" } else { "Space" }.into(),
         KeyCode::Delete => if spanish { "Supr" } else { "Del" }.into(),
-        KeyCode::Backspace => "⌫".into(),
+        KeyCode::Backspace => if spanish { "Retroceso" } else { "Backspace" }.into(),
         KeyCode::Insert => "Ins".into(),
         KeyCode::PageUp => if spanish { "RePág" } else { "PgUp" }.into(),
         KeyCode::PageDown => if spanish { "AvPág" } else { "PgDn" }.into(),
@@ -1003,9 +1009,13 @@ pub fn spawn_ui(mut commands: Commands, font: Res<UiFont>, settings: Option<Res<
                                                 .collect(),
                                             None => MOUSE
                                                 .iter()
-                                                .map(|&(keys, spanish, english)| {
+                                                .map(|&(es_keys, en_keys, spanish, english)| {
                                                     (
-                                                        keys.to_string(),
+                                                        match language {
+                                                            Language::Spanish => es_keys,
+                                                            Language::English => en_keys,
+                                                        }
+                                                        .to_string(),
                                                         match language {
                                                             Language::Spanish => spanish,
                                                             Language::English => english,
@@ -1094,8 +1104,10 @@ pub fn show_texts(
     editor: Res<Editor>,
     shaping: Res<Shaping>,
     circuits: Res<crate::circuits::Circuits>,
+    settings: Option<Res<Settings>>,
     mut texts: Query<(&UiText, &mut Text)>,
 ) {
+    let language = settings.map_or(Language::default(), |settings| settings.language);
     let circuit = circuits.at(editor.circuit.min(circuits.len() - 1));
     let unsaved = editor.edit.changed || shaping.changed || editor.roadside.changed;
     for (which, mut text) in &mut texts {
@@ -1103,7 +1115,11 @@ pub fn show_texts(
             UiText::Title => format!(
                 "EDITOR · {}{}",
                 circuit.name,
-                if unsaved { " ●" } else { "" }
+                match (unsaved, language) {
+                    (false, _) => "",
+                    (true, Language::Spanish) => " (sin guardar)",
+                    (true, Language::English) => " (unsaved)",
+                }
             ),
             UiText::Figures => super::figures(&editor),
             UiText::Info => match editor.mode {
