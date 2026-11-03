@@ -546,7 +546,11 @@ pub fn roadside_text(roadside: &Roadside) -> String {
     format!(
         "Adding: {}\nPicked: {picked}\nDrag one along the road with the left button{}",
         roadside.adding.map_or("nothing", Kind::name),
-        if roadside.changed { "\nChanged, not saved" } else { "" },
+        if roadside.changed {
+            "\nChanged, not saved"
+        } else {
+            ""
+        },
     )
 }
 

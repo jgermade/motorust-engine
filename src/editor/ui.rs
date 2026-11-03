@@ -81,6 +81,7 @@ pub struct Binding {
     pub button: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 const fn bind(
     scope: Scope,
     key: KeyCode,
@@ -112,61 +113,434 @@ const ROAD: Scope = Scope::In(Mode::Roadside);
 /// Every key of the editor and what it does: the one table the keys, the
 /// buttons and the legends come from.
 pub const BINDINGS: &[Binding] = &[
-    bind(ANY, KeyCode::KeyM, false, false, Action::CycleMode, "Cambiar de modo", "Switch mode", false),
-    bind(ANY, KeyCode::KeyS, true, false, Action::Save, "Guardar", "Save", true),
-    bind(ANY, KeyCode::KeyZ, true, false, Action::Undo, "Deshacer", "Undo", true),
-    bind(ANY, KeyCode::KeyY, true, false, Action::Redo, "Rehacer", "Redo", true),
-    bind(ANY, KeyCode::KeyZ, true, true, Action::Redo, "Rehacer", "Redo", false),
-    bind(ANY, KeyCode::Tab, false, false, Action::Help, "Ayuda", "Help", true),
-    bind(ANY, KeyCode::Escape, false, false, Action::Exit, "Salir", "Leave", true),
-    bind(ANY, KeyCode::PageUp, false, false, Action::PrevCircuit, "Circuito anterior", "Last circuit", true),
-    bind(ANY, KeyCode::PageDown, false, false, Action::NextCircuit, "Circuito siguiente", "Next circuit", true),
-    bind(ANY, KeyCode::Home, false, false, Action::ShowAll, "Ver todo el circuito", "Whole circuit in view", true),
-    bind(ANY, KeyCode::Space, false, false, Action::Next, "Elegir el siguiente", "Pick the next", false),
-    bind(ANY, KeyCode::Space, false, true, Action::Prev, "Elegir el anterior", "Pick the last", false),
+    bind(
+        ANY,
+        KeyCode::KeyM,
+        false,
+        false,
+        Action::CycleMode,
+        "Cambiar de modo",
+        "Switch mode",
+        false,
+    ),
+    bind(
+        ANY,
+        KeyCode::KeyS,
+        true,
+        false,
+        Action::Save,
+        "Guardar",
+        "Save",
+        true,
+    ),
+    bind(
+        ANY,
+        KeyCode::KeyZ,
+        true,
+        false,
+        Action::Undo,
+        "Deshacer",
+        "Undo",
+        true,
+    ),
+    bind(
+        ANY,
+        KeyCode::KeyY,
+        true,
+        false,
+        Action::Redo,
+        "Rehacer",
+        "Redo",
+        true,
+    ),
+    bind(
+        ANY,
+        KeyCode::KeyZ,
+        true,
+        true,
+        Action::Redo,
+        "Rehacer",
+        "Redo",
+        false,
+    ),
+    bind(
+        ANY,
+        KeyCode::Tab,
+        false,
+        false,
+        Action::Help,
+        "Ayuda",
+        "Help",
+        true,
+    ),
+    bind(
+        ANY,
+        KeyCode::Escape,
+        false,
+        false,
+        Action::Exit,
+        "Salir",
+        "Leave",
+        true,
+    ),
+    bind(
+        ANY,
+        KeyCode::PageUp,
+        false,
+        false,
+        Action::PrevCircuit,
+        "Circuito anterior",
+        "Last circuit",
+        true,
+    ),
+    bind(
+        ANY,
+        KeyCode::PageDown,
+        false,
+        false,
+        Action::NextCircuit,
+        "Circuito siguiente",
+        "Next circuit",
+        true,
+    ),
+    bind(
+        ANY,
+        KeyCode::Home,
+        false,
+        false,
+        Action::ShowAll,
+        "Ver todo el circuito",
+        "Whole circuit in view",
+        true,
+    ),
+    bind(
+        ANY,
+        KeyCode::Space,
+        false,
+        false,
+        Action::Next,
+        "Elegir el siguiente",
+        "Pick the next",
+        false,
+    ),
+    bind(
+        ANY,
+        KeyCode::Space,
+        false,
+        true,
+        Action::Prev,
+        "Elegir el anterior",
+        "Pick the last",
+        false,
+    ),
     Binding {
         also: Some(KeyCode::Insert),
-        ..bind(LAP, KeyCode::KeyN, false, false, Action::AddAfter, "Añadir tras el elegido (punto, marca) o partir el tramo", "Add after the one picked (point, mark), or split the stretch", true)
+        ..bind(
+            LAP,
+            KeyCode::KeyN,
+            false,
+            false,
+            Action::AddAfter,
+            "Añadir tras el elegido (punto, marca) o partir el tramo",
+            "Add after the one picked (point, mark), or split the stretch",
+            true,
+        )
     },
     Binding {
         also: Some(KeyCode::Backspace),
-        ..bind(LAP, KeyCode::Delete, false, false, Action::Remove, "Quitar el elegido", "Take the one picked out", true)
+        ..bind(
+            LAP,
+            KeyCode::Delete,
+            false,
+            false,
+            Action::Remove,
+            "Quitar el elegido",
+            "Take the one picked out",
+            true,
+        )
     },
-    bind(LAP, KeyCode::KeyB, false, false, Action::AddBanking, "Tramo de peralte (en el cursor del panel)", "Banking (at the panel's cursor)", true),
-    bind(LAP, KeyCode::BracketLeft, false, false, Action::FactorDown, "Menos peralte en el tramo", "Less banking on the stretch", true),
-    bind(LAP, KeyCode::BracketRight, false, false, Action::FactorUp, "Más peralte en el tramo", "More banking on the stretch", true),
-    bind(LAP, KeyCode::KeyT, false, false, Action::ToggleRaised, "Tramo elevado sobre soportes, o no", "Stretch raised on supports, or not", true),
-    bind(LAP, KeyCode::KeyG, false, false, Action::GripUp, "Más agarre en el tramo", "More grip on the stretch", true),
-    bind(LAP, KeyCode::KeyG, false, true, Action::GripDown, "Menos agarre en el tramo", "Less grip on the stretch", true),
-    bind(TERRAIN, KeyCode::Digit1, false, false, Action::Tool(Tool::Raise), "Subir", "Raise", true),
-    bind(TERRAIN, KeyCode::Digit2, false, false, Action::Tool(Tool::Lower), "Bajar", "Lower", true),
-    bind(TERRAIN, KeyCode::Digit3, false, false, Action::Tool(Tool::Smooth), "Suavizar", "Smooth", true),
-    bind(TERRAIN, KeyCode::Digit4, false, false, Action::Tool(Tool::Flatten), "Aplanar", "Flatten", true),
-    bind(TERRAIN, KeyCode::Digit5, false, false, Action::Tool(Tool::Restore), "Restaurar", "Restore", true),
-    bind(TERRAIN, KeyCode::Digit6, false, false, Action::Tool(Tool::Paint(Paint::Grass)), "Pintar hierba", "Paint grass", true),
-    bind(TERRAIN, KeyCode::Digit7, false, false, Action::Tool(Tool::Paint(Paint::Sand)), "Pintar arena", "Paint sand", true),
-    bind(TERRAIN, KeyCode::Digit8, false, false, Action::Tool(Tool::Paint(Paint::Rock)), "Pintar roca", "Paint rock", true),
-    bind(TERRAIN, KeyCode::Digit9, false, false, Action::Tool(Tool::Paint(Paint::Land)), "Quitar pintura", "Unpaint", true),
-    bind(TERRAIN, KeyCode::BracketLeft, false, false, Action::Smaller, "Pincel más pequeño (o Mayús+rueda)", "Smaller brush (or Shift+wheel)", true),
-    bind(TERRAIN, KeyCode::BracketRight, false, false, Action::Bigger, "Pincel más grande (o Mayús+rueda)", "Bigger brush (or Shift+wheel)", true),
-    bind(TERRAIN, KeyCode::Comma, false, false, Action::Weaker, "Pincel más suave (o Ctrl+rueda)", "Weaker brush (or Ctrl+wheel)", true),
-    bind(TERRAIN, KeyCode::Period, false, false, Action::Stronger, "Pincel más fuerte (o Ctrl+rueda)", "Stronger brush (or Ctrl+wheel)", true),
-    bind(ROAD, KeyCode::Digit1, false, false, Action::Adding(Kind::Gantry), "Arco (checkpoint)", "Arch (checkpoint)", true),
-    bind(ROAD, KeyCode::Digit2, false, false, Action::Adding(Kind::Billboard), "Cartel", "Billboard", true),
-    bind(ROAD, KeyCode::Digit3, false, false, Action::Adding(Kind::Chevron), "Señal de curva", "Chevron sign", true),
-    bind(ROAD, KeyCode::Digit4, false, false, Action::Adding(Kind::BrakeMarker), "Marcador de frenada", "Brake marker", true),
-    bind(ROAD, KeyCode::Digit5, false, false, Action::Adding(Kind::Grandstand), "Tribuna", "Grandstand", true),
-    bind(ROAD, KeyCode::KeyN, false, false, Action::AddHere, "Añadir en el cursor (o en el centro)", "Add at the cursor (or the middle)", true),
-    bind(ROAD, KeyCode::KeyX, false, false, Action::Flip, "Al otro lado de la carretera", "To the other side of the road", true),
+    bind(
+        LAP,
+        KeyCode::KeyB,
+        false,
+        false,
+        Action::AddBanking,
+        "Tramo de peralte (en el cursor del panel)",
+        "Banking (at the panel's cursor)",
+        true,
+    ),
+    bind(
+        LAP,
+        KeyCode::BracketLeft,
+        false,
+        false,
+        Action::FactorDown,
+        "Menos peralte en el tramo",
+        "Less banking on the stretch",
+        true,
+    ),
+    bind(
+        LAP,
+        KeyCode::BracketRight,
+        false,
+        false,
+        Action::FactorUp,
+        "Más peralte en el tramo",
+        "More banking on the stretch",
+        true,
+    ),
+    bind(
+        LAP,
+        KeyCode::KeyT,
+        false,
+        false,
+        Action::ToggleRaised,
+        "Tramo elevado sobre soportes, o no",
+        "Stretch raised on supports, or not",
+        true,
+    ),
+    bind(
+        LAP,
+        KeyCode::KeyG,
+        false,
+        false,
+        Action::GripUp,
+        "Más agarre en el tramo",
+        "More grip on the stretch",
+        true,
+    ),
+    bind(
+        LAP,
+        KeyCode::KeyG,
+        false,
+        true,
+        Action::GripDown,
+        "Menos agarre en el tramo",
+        "Less grip on the stretch",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Digit1,
+        false,
+        false,
+        Action::Tool(Tool::Raise),
+        "Subir",
+        "Raise",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Digit2,
+        false,
+        false,
+        Action::Tool(Tool::Lower),
+        "Bajar",
+        "Lower",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Digit3,
+        false,
+        false,
+        Action::Tool(Tool::Smooth),
+        "Suavizar",
+        "Smooth",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Digit4,
+        false,
+        false,
+        Action::Tool(Tool::Flatten),
+        "Aplanar",
+        "Flatten",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Digit5,
+        false,
+        false,
+        Action::Tool(Tool::Restore),
+        "Restaurar",
+        "Restore",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Digit6,
+        false,
+        false,
+        Action::Tool(Tool::Paint(Paint::Grass)),
+        "Pintar hierba",
+        "Paint grass",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Digit7,
+        false,
+        false,
+        Action::Tool(Tool::Paint(Paint::Sand)),
+        "Pintar arena",
+        "Paint sand",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Digit8,
+        false,
+        false,
+        Action::Tool(Tool::Paint(Paint::Rock)),
+        "Pintar roca",
+        "Paint rock",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Digit9,
+        false,
+        false,
+        Action::Tool(Tool::Paint(Paint::Land)),
+        "Quitar pintura",
+        "Unpaint",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::BracketLeft,
+        false,
+        false,
+        Action::Smaller,
+        "Pincel más pequeño (o Mayús+rueda)",
+        "Smaller brush (or Shift+wheel)",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::BracketRight,
+        false,
+        false,
+        Action::Bigger,
+        "Pincel más grande (o Mayús+rueda)",
+        "Bigger brush (or Shift+wheel)",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Comma,
+        false,
+        false,
+        Action::Weaker,
+        "Pincel más suave (o Ctrl+rueda)",
+        "Weaker brush (or Ctrl+wheel)",
+        true,
+    ),
+    bind(
+        TERRAIN,
+        KeyCode::Period,
+        false,
+        false,
+        Action::Stronger,
+        "Pincel más fuerte (o Ctrl+rueda)",
+        "Stronger brush (or Ctrl+wheel)",
+        true,
+    ),
+    bind(
+        ROAD,
+        KeyCode::Digit1,
+        false,
+        false,
+        Action::Adding(Kind::Gantry),
+        "Arco (checkpoint)",
+        "Arch (checkpoint)",
+        true,
+    ),
+    bind(
+        ROAD,
+        KeyCode::Digit2,
+        false,
+        false,
+        Action::Adding(Kind::Billboard),
+        "Cartel",
+        "Billboard",
+        true,
+    ),
+    bind(
+        ROAD,
+        KeyCode::Digit3,
+        false,
+        false,
+        Action::Adding(Kind::Chevron),
+        "Señal de curva",
+        "Chevron sign",
+        true,
+    ),
+    bind(
+        ROAD,
+        KeyCode::Digit4,
+        false,
+        false,
+        Action::Adding(Kind::BrakeMarker),
+        "Marcador de frenada",
+        "Brake marker",
+        true,
+    ),
+    bind(
+        ROAD,
+        KeyCode::Digit5,
+        false,
+        false,
+        Action::Adding(Kind::Grandstand),
+        "Tribuna",
+        "Grandstand",
+        true,
+    ),
+    bind(
+        ROAD,
+        KeyCode::KeyN,
+        false,
+        false,
+        Action::AddHere,
+        "Añadir en el cursor (o en el centro)",
+        "Add at the cursor (or the middle)",
+        true,
+    ),
+    bind(
+        ROAD,
+        KeyCode::KeyX,
+        false,
+        false,
+        Action::Flip,
+        "Al otro lado de la carretera",
+        "To the other side of the road",
+        true,
+    ),
     Binding {
         also: Some(KeyCode::Backspace),
-        ..bind(ROAD, KeyCode::Delete, false, false, Action::Remove, "Quitar el elegido", "Take the one picked out", true)
+        ..bind(
+            ROAD,
+            KeyCode::Delete,
+            false,
+            false,
+            Action::Remove,
+            "Quitar el elegido",
+            "Take the one picked out",
+            true,
+        )
     },
 ];
 
 /// What the mouse and the camera's keys do, for the legend (no buttons).
 const MOUSE: &[(&str, &str, &str)] = &[
-    ("Clic izq.", "Elegir y arrastrar (puntos en el mapa; marcas y tramos en el panel; el pincel; lo de la carretera)", "Pick and drag (points on the map; marks and stretches on the panel; the brush; what stands by the road)"),
+    (
+        "Clic izq.",
+        "Elegir y arrastrar (puntos en el mapa; marcas y tramos en el panel; el pincel; lo de la carretera)",
+        "Pick and drag (points on the map; marks and stretches on the panel; the brush; what stands by the road)",
+    ),
     ("Clic der.", "Mover la vista", "Move the view"),
     ("Rueda", "Acercar / alejar", "Zoom in / out"),
     ("W A S D", "Mover la vista", "Move the view"),
@@ -252,7 +626,11 @@ impl Actions {
 
 /// The actions the keys ask for: those of the mode in use, Ctrl and Shift
 /// as each says; with the legend open, only closing it.
-pub fn read_keys(keys: Res<ButtonInput<KeyCode>>, editor: Res<Editor>, mut actions: ResMut<Actions>) {
+pub fn read_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    editor: Res<Editor>,
+    mut actions: ResMut<Actions>,
+) {
     let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     if actions.help {
@@ -617,7 +995,10 @@ pub fn spawn_ui(mut commands: Commands, font: Res<UiFont>, settings: Option<Res<
                                                 .iter()
                                                 .filter(|binding| binding.scope == scope)
                                                 .map(|binding| {
-                                                    (binding.keys(language), binding.label(language))
+                                                    (
+                                                        binding.keys(language),
+                                                        binding.label(language),
+                                                    )
                                                 })
                                                 .collect(),
                                             None => MOUSE
@@ -746,7 +1127,10 @@ mod tests {
     fn keys_are_written_short_as_on_a_badge() {
         let save = BINDINGS.iter().find(|b| b.action == Action::Save).unwrap();
         assert_eq!(save.keys(Language::Spanish), "Ctrl+S");
-        let grip = BINDINGS.iter().find(|b| b.action == Action::GripDown).unwrap();
+        let grip = BINDINGS
+            .iter()
+            .find(|b| b.action == Action::GripDown)
+            .unwrap();
         assert_eq!(grip.keys(Language::Spanish), "Mayús+G");
         assert_eq!(grip.keys(Language::English), "Shift+G");
         assert_eq!(key_name(KeyCode::Digit7, Language::English), "7");
@@ -759,10 +1143,16 @@ mod tests {
             assert!(!binding.spanish.is_empty() && !binding.english.is_empty());
         }
         for tool in Tool::ALL {
-            assert!(BINDINGS.iter().any(|b| b.action == Action::Tool(tool)), "{tool:?}");
+            assert!(
+                BINDINGS.iter().any(|b| b.action == Action::Tool(tool)),
+                "{tool:?}"
+            );
         }
         for kind in Kind::ALL {
-            assert!(BINDINGS.iter().any(|b| b.action == Action::Adding(kind)), "{kind:?}");
+            assert!(
+                BINDINGS.iter().any(|b| b.action == Action::Adding(kind)),
+                "{kind:?}"
+            );
         }
     }
 }

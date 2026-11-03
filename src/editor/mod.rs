@@ -59,7 +59,6 @@ use bevy::window::PrimaryWindow;
 use crate::camera::CameraPlayer;
 use crate::circuits::reload::CircuitsReloaded;
 use crate::circuits::{Circuits, CurrentCircuit};
-use crate::hud::UiFont;
 use crate::menu::GameState;
 use crate::track::{BASE_ELEVATION, Layout, Track};
 use file::EditedPoint;
@@ -993,7 +992,9 @@ fn act(
             (Action::AddBanking, Mode::Lap) => {
                 // At the panel's cursor; from the button, at the stretch of
                 // the lap nearest the middle of the view.
-                let along = editor.hover.unwrap_or_else(|| editor.along_nearest(view.focus));
+                let along = editor
+                    .hover
+                    .unwrap_or_else(|| editor.along_nearest(view.focus));
                 editor.edit.add_span_at(along, lap);
             }
             (Action::Remove, Mode::Lap) => editor.edit.remove_selected(),
@@ -1041,10 +1042,11 @@ fn act(
             (Action::PrevCircuit | Action::NextCircuit, _) => {
                 let step = if action == Action::NextCircuit { 1 } else { -1 };
                 if editor.unsaved(&shaping) {
-                    editor.message = "Unsaved changes: save them first (Ctrl+S), or undo them".into();
+                    editor.message =
+                        "Unsaved changes: save them first (Ctrl+S), or undo them".into();
                 } else {
-                    let index = (editor.circuit as isize + step)
-                        .rem_euclid(circuits.len() as isize) as usize;
+                    let index = (editor.circuit as isize + step).rem_euclid(circuits.len() as isize)
+                        as usize;
                     current.0 = index;
                     editor.open(index, &circuits, &mut view, now);
                     editor.message.clear();

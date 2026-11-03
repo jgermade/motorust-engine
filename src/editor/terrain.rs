@@ -206,7 +206,8 @@ pub fn shaping_keys(
         MouseScrollUnit::Line => scroll.delta.y,
         MouseScrollUnit::Pixel => scroll.delta.y / 40.0,
     };
-    let mut size = actions.has(Action::Bigger) as i32 as f32 - actions.has(Action::Smaller) as i32 as f32;
+    let mut size =
+        actions.has(Action::Bigger) as i32 as f32 - actions.has(Action::Smaller) as i32 as f32;
     let mut strength =
         actions.has(Action::Stronger) as i32 as f32 - actions.has(Action::Weaker) as i32 as f32;
     if shift && !actions.over_ui {
@@ -596,7 +597,11 @@ pub fn shaping_text(shaping: &Shaping) -> String {
         shaping.brush.tool.name(),
         shaping.brush.radius,
         shaping.brush.strength,
-        if shaping.changed { "\nShaped, not saved" } else { "" },
+        if shaping.changed {
+            "\nShaped, not saved"
+        } else {
+            ""
+        },
         if rebuilding(shaping) {
             "\nBuilding the circuit anew…"
         } else {
