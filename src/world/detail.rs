@@ -745,7 +745,6 @@ fn antialias(
     settings: Option<Res<Settings>>,
     detail: Option<Res<Detail>>,
     two_samples: Option<Res<TwoSamples>>,
-    pixels: Option<Res<crate::render_scale::PixelLook>>,
     cameras: Query<
         (
             Entity,
@@ -767,9 +766,6 @@ fn antialias(
         detail.is_none_or(|detail| detail.msaa),
         TwoSamples::of(two_samples.as_deref()),
     );
-    // Pixel art keeps its edges as hard as its pixels.
-    let pixel_art = pixels.is_some_and(|pixels| pixels.0.is_some());
-    let now = if pixel_art { Antialiasing::Off } else { now };
     let (msaa, fxaa, smaa) = match now {
         Antialiasing::Msaa => (Msaa::Sample4, false, false),
         Antialiasing::Msaa2 => (Msaa::Sample2, false, false),

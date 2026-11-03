@@ -12,14 +12,6 @@
 //! another size (the sharpening's pipeline, and the interface's without
 //! multisampling, are made the first time), so it can be changed in a race.
 //!
-//! A circuit drawn as pixel art ([`Look::Pixel`]) draws its world the same
-//! way, into an image a fixed number of lines high (at most as big as the
-//! render scale would make it), and shows it unsmoothed and unsharpened,
-//! each of its pixels a sharp square, its colours cut to a few shades of
-//! red, green and blue with ordered dithering (`pixel.wgsl`, [`PixelArt`]);
-//! the world's edges are not smoothed either (see
-//! [`crate::world::detail`]).
-//!
 //! The world is never drawn at more pixels than the screen itself has. A
 //! Mac's scaled display modes (a 1440p monitor "looking like" 2048 × 1152
 //! in HiDPI, a laptop's "more space") give the window more pixels than the
@@ -33,140 +25,31 @@
 
 use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
 use bevy::camera::{CameraUpdateSystems, ImageRenderTarget, RenderTarget};
-use bevy::image::{ImageFilterMode, ImageSampler};
+use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy::ui::IsDefaultUiCamera;
 use bevy::window::{Monitor, OnMonitor, PrimaryMonitor, PrimaryWindow, WindowRef};
 
-use bevy::render::render_resource::{AsBindGroup, ShaderType};
-use bevy::shader::ShaderRef;
-use bevy::sprite_render::{Material2d, Material2dPlugin, MeshMaterial2d, SpriteRenderPlugin};
-
-use crate::circuits::{Circuits, CurrentCircuit};
 use crate::settings::Settings;
 use crate::world::detail::{Detail, choose_detail};
 use crate::world::realm::PortalView;
-use crate::world::scenery::Look;
 
 pub struct RenderScalePlugin;
 
 impl Plugin for RenderScalePlugin {
     fn build(&self, app: &mut App) {
-        bevy::asset::embedded_asset!(app, "pixel.wgsl");
-        // Without the renderer (in the tests), the pixel art's material is
-        // only an asset, and nothing shows it.
-        if app.is_plugin_added::<SpriteRenderPlugin>() {
-            app.add_plugins(Material2dPlugin::<PixelArt>::default());
-        } else {
-            app.init_asset::<PixelArt>();
-        }
         app.init_resource::<NativeShare>()
-            .init_resource::<PixelLook>()
             .add_systems(Startup, spawn_scaled_world)
-            .add_systems(
-                Update,
-                (find_native_sizes, follow_native_share, follow_the_look).chain(),
-            )
+            .add_systems(Update, (find_native_sizes, follow_native_share).chain())
             // With the detail of the frame before, as the split screen's
             // halves in `Update`: both change together.
             .add_systems(
                 PostUpdate,
-                (scale_the_world, show_the_pixel_art)
-                    .chain()
+                scale_the_world
                     .before(CameraUpdateSystems)
                     .before(choose_detail),
             );
-    }
-}
-
-/// The pixel art the current circuit's world is drawn as, if it is (see
-/// [`Look::Pixel`]).
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct PixelLook(pub Option<Pixels>);
-
-/// How a world drawn as pixel art is drawn (see [`Look::Pixel`]).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Pixels {
-    pub lines: u32,
-    pub levels: u32,
-    pub dither: f32,
-}
-
-impl PixelLook {
-    /// The pixel art a circuit's `look` asks for, if any: two lines and two
-    /// shades at least, and the dithering between none and a whole shade.
-    pub fn of(look: Look) -> Self {
-        Self(match look {
-            Look::Smooth => None,
-            Look::Pixel {
-                lines,
-                levels,
-                dither,
-            } => Some(Pixels {
-                lines: lines.max(2),
-                levels: levels.clamp(2, 256),
-                dither: dither.clamp(0.0, 1.0),
-            }),
-        })
-    }
-}
-
-/// The current circuit's look.
-fn follow_the_look(
-    circuits: Option<Res<Circuits>>,
-    current: Option<Res<CurrentCircuit>>,
-    mut look: ResMut<PixelLook>,
-) {
-    let (Some(circuits), Some(current)) = (circuits, current) else {
-        return;
-    };
-    let now = PixelLook::of(circuits.get(*current).scenery.look);
-    look.set_if_neq(now);
-}
-
-/// The pixels a world drawn as pixel art `lines` lines high is drawn at in
-/// a window of `window` pixels: that many lines, as wide as the window's
-/// shape makes them; no more than `drawn`, the size the render scale
-/// draws it at.
-pub fn pixel_size(window: UVec2, lines: u32, drawn: UVec2) -> UVec2 {
-    if window.min_element() == 0 {
-        return drawn;
-    }
-    let width = (window.x as f32 * lines as f32 / window.y as f32).round() as u32;
-    UVec2::new(width, lines).max(UVec2::ONE).min(drawn)
-}
-
-/// The world drawn as pixel art, shown over the whole window by the
-/// interface's camera in place of [`ScaledWorld`]'s sprite.
-#[derive(Component)]
-struct PixelWorld;
-
-/// How the world drawn as pixel art is shown (see `pixel.wgsl`): each of
-/// its pixels as a sharp square, its colours cut to a few shades.
-#[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
-pub struct PixelArt {
-    #[uniform(0)]
-    look: PixelUniform,
-    #[texture(1)]
-    #[sampler(2)]
-    world: Handle<Image>,
-}
-
-/// What `pixel.wgsl` reads of [`PixelArt`].
-#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
-struct PixelUniform {
-    /// The image's size (pixels).
-    size: Vec2,
-    /// How many shades each of red, green and blue has.
-    levels: f32,
-    /// How much the dithering breaks the bands between them.
-    dither: f32,
-}
-
-impl Material2d for PixelArt {
-    fn fragment_shader() -> ShaderRef {
-        "embedded://motorust_engine/pixel.wgsl".into()
     }
 }
 
@@ -338,29 +221,15 @@ fn spawn_scaled_world(mut commands: Commands) {
 }
 
 /// An image `size` pixels big for the 3D cameras to draw into, smoothed
-/// when it is stretched over the window, or each of its pixels a sharp
-/// square as pixel art.
-fn target_image(size: UVec2, pixel_art: bool) -> Image {
+/// when it is stretched over the window.
+fn target_image(size: UVec2) -> Image {
     let mut image = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba8UnormSrgb, None);
     // Drawn into, never filled from here; each size a new image, nothing
     // of an old one to copy into it (Bevy would warn it found none).
     image.data = None;
     image.copy_on_resize = false;
-    image.sampler = if pixel_art {
-        ImageSampler::nearest()
-    } else {
-        ImageSampler::linear()
-    };
+    image.sampler = ImageSampler::linear();
     image
-}
-
-/// Whether an image the world is drawn into shows each of its pixels as a
-/// sharp square (see [`target_image`]).
-fn sharp(image: &Image) -> bool {
-    matches!(
-        &image.sampler,
-        ImageSampler::Descriptor(sampler) if sampler.mag_filter == ImageFilterMode::Nearest
-    )
 }
 
 /// The world drawn at the render scale in use: into an image that
@@ -369,9 +238,8 @@ fn sharp(image: &Image) -> bool {
 #[allow(clippy::type_complexity)]
 fn scale_the_world(
     mut commands: Commands,
-    // The detail (with the scale chosen), the screen's own share and the
-    // pixel art, if the world is drawn as that.
-    (detail, native, pixels): (Option<Res<Detail>>, Res<NativeShare>, Res<PixelLook>),
+    // The detail (with the scale chosen) and the screen's own share.
+    (detail, native): (Option<Res<Detail>>, Res<NativeShare>),
     window: Query<&Window, With<PrimaryWindow>>,
     mut images: ResMut<Assets<Image>>,
     mut shown: Query<(&mut Sprite, &mut Visibility), With<ScaledWorld>>,
@@ -387,29 +255,22 @@ fn scale_the_world(
     };
     let full = window.physical_size();
     let size = drawn_size(full, render_percent(detail.as_deref()), *native);
-    let size = pixels
-        .0
-        .map_or(size, |pixels| pixel_size(full, pixels.lines, size));
-    let pixel_art = pixels.0.is_some();
     let scaled = size != full;
     if scaled {
-        // An image of the size wanted: a new one when the size, or how it is
-        // shown, changes, so that the cameras drawing into it take its size
-        // in the same frame.
+        // An image of the size wanted: a new one when the size changes, so
+        // that the cameras drawing into it take its size in the same frame.
         if images
             .get(&sprite.image)
-            .is_none_or(|image| image.size() != size || sharp(image) != pixel_art)
+            .is_none_or(|image| image.size() != size)
         {
-            sprite.image = images.add(target_image(size, pixel_art));
+            sprite.image = images.add(target_image(size));
         }
         let covers = Some(window.size());
         if sprite.custom_size != covers {
             sprite.custom_size = covers;
         }
     }
-    // As pixel art, its own quad shows the image instead (see
-    // `show_the_pixel_art`).
-    visibility.set_if_neq(if scaled && !pixel_art {
+    visibility.set_if_neq(if scaled {
         Visibility::Inherited
     } else {
         Visibility::Hidden
@@ -446,93 +307,17 @@ fn scale_the_world(
                 ClearColorConfig::None
             };
         }
-        // Pixel art is shown as it is drawn, unsharpened.
-        let sharpens = scaled && !pixel_art;
-        if sharpens && !sharpened {
+        if scaled && !sharpened {
             commands.entity(camera).insert(ContrastAdaptiveSharpening {
                 enabled: true,
                 sharpening_strength: SHARPENING,
                 denoise: false,
             });
-        } else if !sharpens && sharpened {
+        } else if !scaled && sharpened {
             commands
                 .entity(camera)
                 .remove::<ContrastAdaptiveSharpening>();
         }
-    }
-}
-
-/// Shows the world drawn as pixel art over the whole window, through
-/// [`PixelArt`], while it is: a quad as big as the window, in front of the
-/// interface's camera, made the first time.
-#[allow(clippy::type_complexity)]
-fn show_the_pixel_art(
-    mut commands: Commands,
-    // The pixel art wanted, and the images the world is drawn into.
-    (pixels, images): (Res<PixelLook>, Res<Assets<Image>>),
-    window: Query<&Window, With<PrimaryWindow>>,
-    world: Query<&Sprite, With<ScaledWorld>>,
-    meshes: Option<ResMut<Assets<Mesh>>>,
-    mut materials: ResMut<Assets<PixelArt>>,
-    mut shown: Query<
-        (&MeshMaterial2d<PixelArt>, &mut Transform, &mut Visibility),
-        With<PixelWorld>,
-    >,
-) {
-    let (Ok(window), Ok(sprite)) = (window.single(), world.single()) else {
-        return;
-    };
-    // Drawn into the sprite's image only while it is drawn smaller.
-    let drawn = images
-        .get(&sprite.image)
-        .map(Image::size)
-        .filter(|&size| size != window.physical_size());
-    let wanted = pixels.0.zip(drawn);
-    let Ok((material, mut transform, mut visibility)) = shown.single_mut() else {
-        // Made the first time it is wanted, where there are meshes to make it
-        // of (not in the tests).
-        if let (Some((look, size)), Some(mut meshes)) = (wanted, meshes) {
-            commands.spawn((
-                PixelWorld,
-                Mesh2d(meshes.add(Rectangle::new(1.0, 1.0))),
-                MeshMaterial2d(materials.add(PixelArt {
-                    look: uniform(look, size),
-                    world: sprite.image.clone(),
-                })),
-                Transform::from_scale(window.size().extend(1.0)),
-            ));
-        }
-        return;
-    };
-    visibility.set_if_neq(if wanted.is_some() {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    });
-    let Some((look, size)) = wanted else {
-        return;
-    };
-    let scale = window.size().extend(1.0);
-    if transform.scale != scale {
-        transform.scale = scale;
-    }
-    let now = uniform(look, size);
-    let stale = materials
-        .get(&material.0)
-        .is_some_and(|art| art.look != now || art.world != sprite.image);
-    if stale && let Some(mut art) = materials.get_mut(&material.0) {
-        art.look = now;
-        art.world = sprite.image.clone();
-    }
-}
-
-/// What `pixel.wgsl` reads for a world drawn as `look` into an image `size`
-/// pixels big.
-fn uniform(look: Pixels, size: UVec2) -> PixelUniform {
-    PixelUniform {
-        size: size.as_vec2(),
-        levels: look.levels as f32,
-        dither: look.dither,
     }
 }
 
@@ -677,103 +462,5 @@ mod tests {
         assert!(matches!(camera.clear_color, ClearColorConfig::None));
         let (_, visibility) = sprites.single(app.world()).unwrap();
         assert_eq!(*visibility, Visibility::Hidden);
-    }
-    #[test]
-    fn pixel_art_is_drawn_at_its_lines_the_window_s_shape_kept() {
-        let window = UVec2::new(2000, 1000);
-        assert_eq!(pixel_size(window, 224, window), UVec2::new(448, 224));
-        let wide = UVec2::new(3440, 1440);
-        assert_eq!(pixel_size(wide, 240, wide), UVec2::new(573, 240));
-        // Never more than the render scale draws the world at.
-        assert_eq!(
-            pixel_size(window, 224, UVec2::new(300, 150)),
-            UVec2::new(300, 150)
-        );
-        assert_eq!(pixel_size(UVec2::ZERO, 224, UVec2::ONE), UVec2::ONE);
-    }
-
-    #[test]
-    fn a_circuit_s_look_reads_from_its_file_and_keeps_to_its_limits() {
-        assert_eq!(PixelLook::of(Look::Smooth), PixelLook(None));
-        let look: Look = ron::from_str("Pixel(lines: 224, levels: 16)").unwrap();
-        assert_eq!(
-            PixelLook::of(look),
-            PixelLook(Some(Pixels {
-                lines: 224,
-                levels: 16,
-                dither: 0.5,
-            }))
-        );
-        let wild = Look::Pixel {
-            lines: 0,
-            levels: 1000,
-            dither: 3.0,
-        };
-        assert_eq!(
-            PixelLook::of(wild),
-            PixelLook(Some(Pixels {
-                lines: 2,
-                levels: 256,
-                dither: 1.0,
-            }))
-        );
-        assert!(ron::from_str::<Look>("Pixel(lines: 224, levels: 16, colours: 3)").is_err());
-    }
-
-    #[test]
-    fn as_pixel_art_the_world_is_drawn_small_and_shown_sharp_and_unsharpened() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
-            .add_plugins(bevy::asset::AssetPlugin::default())
-            .init_asset::<Image>()
-            .add_plugins(RenderScalePlugin);
-        let mut window = Window::default();
-        window.resolution.set_physical_resolution(2000, 1000);
-        app.world_mut().spawn((window, PrimaryWindow));
-        let world = app.world_mut().spawn(Camera3d::default()).id();
-        let interface = app
-            .world_mut()
-            .spawn((
-                Camera2d,
-                Camera {
-                    clear_color: ClearColorConfig::None,
-                    ..default()
-                },
-                IsDefaultUiCamera,
-            ))
-            .id();
-        app.insert_resource(Detail {
-            scale: 100,
-            ..default()
-        });
-        app.insert_resource(PixelLook::of(Look::Pixel {
-            lines: 224,
-            levels: 16,
-            dither: 0.5,
-        }));
-        app.update();
-        let target = app.world().get::<RenderTarget>(world).unwrap();
-        let RenderTarget::Image(drawn) = target else {
-            panic!("{target:?}");
-        };
-        let images = app.world().resource::<Assets<Image>>();
-        let image = images.get(&drawn.handle).unwrap();
-        assert_eq!(image.size(), UVec2::new(448, 224));
-        assert!(sharp(image), "{:?}", image.sampler);
-        // Shown by its own quad (not made in the tests, with no meshes),
-        // not by the smoothed sprite, and not sharpened.
-        let mut sprites = app.world_mut().query::<(&Sprite, &Visibility)>();
-        let (_, visibility) = sprites.single(app.world()).unwrap();
-        assert_eq!(*visibility, Visibility::Hidden);
-        assert!(
-            app.world()
-                .get::<ContrastAdaptiveSharpening>(interface)
-                .is_none()
-        );
-        // Smooth again: back on the window, at 100 %.
-        app.insert_resource(PixelLook(None));
-        app.update();
-        let target = app.world().get::<RenderTarget>(world).unwrap();
-        assert!(matches!(target, RenderTarget::Window(_)), "{target:?}");
     }
 }

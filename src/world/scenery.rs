@@ -643,42 +643,67 @@ pub struct Scenery {
     /// registered under (see [`crate::world::themes`]).
     #[serde(default)]
     pub themes: Themes,
-    /// How the world is drawn on the screen: as the graphics options say,
-    /// or as pixel art (see [`Look`]).
+    /// How the world is drawn: smooth, or with its ground as voxels (see
+    /// [`Look`]).
     #[serde(default)]
     pub look: Look,
 }
 
-/// How a circuit's world is drawn on the screen.
+/// How a circuit's world is drawn.
 #[derive(Clone, Copy, PartialEq, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum Look {
-    /// As the graphics options say: at the render scale chosen, smoothed.
+    /// The ground as smooth as its shape.
     #[default]
     Smooth,
-    /// As the pixel art of the 8- and 16-bit arcade and console games: the
-    /// world drawn at a few lines and scaled up with each of its pixels a
-    /// sharp square, its edges not smoothed, in a few shades of each of red,
-    /// green and blue, with ordered dithering between them (see
-    /// [`crate::render_scale`]). The interface stays drawn at the window's
-    /// own pixels.
-    Pixel {
-        /// How many lines high the world is drawn (224 as an arcade board's
-        /// screen), its width following the window's shape; never more
-        /// than the render scale would draw it at.
-        lines: u32,
-        /// How many shades each of red, green and blue has: 32 as a 16-bit
-        /// console's colour, fewer for a starker palette (2 at least).
-        levels: u32,
-        /// How much the ordered dithering breaks the bands between one
-        /// shade and the next: 0 not at all, 1 across a whole shade.
-        #[serde(default = "default_dither")]
-        dither: f32,
+    /// The ground as a world of small voxels: drawn as if it were made of
+    /// cubes `size` metres on a side, each of one colour (cut to `shades` of
+    /// each of red, green and blue, if given) and lit as the face
+    /// of a cube it shows, a top or a side, as a staircase of them over the
+    /// ground's slopes would be (see [`super::voxel`]). Optionally, `steps`
+    /// metres high, the ground's own shape in blocks too (see
+    /// [`super::terrain`]). Only the drawing: the ground the bikes, the trees
+    /// and the rest stand on is as smooth as ever.
+    Voxel {
+        /// How big each voxel is (m), at least 0.05 m.
+        size: f32,
+        /// How high each step of the ground's shape in blocks is (m), at
+        /// least 0.25 m, if its shape is in blocks too.
+        #[serde(default)]
+        steps: Option<f32>,
+        /// How many shades each of red, green and blue each voxel's colour
+        /// is cut to, as a palette of pixel art (2 to 256), if it is.
+        #[serde(default)]
+        shades: Option<u32>,
     },
 }
 
-fn default_dither() -> f32 {
-    0.5
+impl Look {
+    /// How big each voxel of the ground is (m), if it is drawn as voxels.
+    pub fn voxel_size(self) -> Option<f32> {
+        match self {
+            Look::Smooth => None,
+            Look::Voxel { size, .. } => Some(size.max(0.05)),
+        }
+    }
+
+    /// How many shades each of red, green and blue each voxel's colour is
+    /// cut to, if it is.
+    pub fn voxel_shades(self) -> Option<u32> {
+        match self {
+            Look::Smooth => None,
+            Look::Voxel { shades, .. } => shades.map(|shades| shades.clamp(2, 256)),
+        }
+    }
+
+    /// How high each step of the ground's shape in blocks is (m), if its
+    /// shape is in blocks.
+    pub fn voxel_steps(self) -> Option<f32> {
+        match self {
+            Look::Smooth => None,
+            Look::Voxel { steps, .. } => steps.map(|steps| steps.max(0.25)),
+        }
+    }
 }
 
 impl Scenery {

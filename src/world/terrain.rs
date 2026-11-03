@@ -155,6 +155,9 @@ pub struct Terrain {
     lakes: Vec<DamGround>,
     /// The ground as shaped and painted by hand (see [`super::sculpt`]).
     sculpt: Option<&'static super::sculpt::Sculpt>,
+    /// How high each step of the ground's blocks is (m), where its shape is
+    /// drawn in blocks (see [`super::scenery::Look::Voxel`]'s `steps`).
+    voxel: Option<f32>,
 }
 
 /// A piece of the ground in the world: one of its meshes, each over the
@@ -296,6 +299,7 @@ impl Terrain {
             grass_shade: scenery.grass_shade,
             lakes: shaper.dams,
             sculpt: scenery.sculpt,
+            voxel: scenery.look.voxel_steps(),
         }
     }
 
@@ -766,6 +770,156 @@ impl Terrain {
         }
     }
 
+    /// The height of the top of the block over cell `(i, j)` of the grid,
+    /// the cell between points `i` and `i + 1` across and `j` and `j + 1`
+    /// down (see [`Self::voxel_band`]): its lowest corner, down to a whole
+    /// number of `block` metres, so that no block stands over the ground
+    /// it stands for, nor over the road.
+    fn block_top(&self, i: usize, j: usize, block: f32) -> f32 {
+        let width = self.xs.len();
+        let lowest = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)]
+            .map(|(i, j)| self.heights[j * width + i])
+            .into_iter()
+            .fold(f32::INFINITY, f32::min);
+        (lowest / block).floor() * block
+    }
+
+    /// The ground's meshes over the cells in rows `cells` of the grid, as
+    /// [`Self::band`] makes them, but in blocks (see
+    /// [`super::scenery::Look::Voxel`]): each cell a column with a flat top
+    /// at [`Self::block_top`], of its ground as the smooth ground is there,
+    /// all of one colour, lit as a level face; and, where it stands over the
+    /// cell east or south of it, or under it, a sheer face of rock between
+    /// the two, lit as it faces. Faces are not shared between blocks.
+    fn voxel_band(
+        &self,
+        cells: std::ops::Range<usize>,
+        normals: &[Vec3],
+        style: Option<Realm>,
+        block: f32,
+    ) -> Band {
+        let (width, depth) = (self.xs.len(), self.zs.len());
+        let mut grass = Builder::default();
+        let mut sand = Builder::default();
+        let mut rock = Builder::default();
+        let mut snow = Builder::default();
+        let mut meadows: Vec<(FlowerKind, Builder)> = Vec::new();
+        // A quad of four corners, its front facing `normal`, all of one
+        // colour, its texture along `uv` of each corner.
+        fn quad(
+            builder: &mut Builder,
+            corners: [Vec3; 4],
+            normal: Vec3,
+            uvs: [Vec2; 4],
+            color: [f32; 4],
+        ) {
+            let [a, b, c, _] = corners;
+            let order: [usize; 6] = if (b - a).cross(c - a).dot(normal) >= 0.0 {
+                [0, 1, 2, 2, 1, 3]
+            } else {
+                [0, 2, 1, 2, 3, 1]
+            };
+            for k in order {
+                builder.push(None, || (corners[k], normal, uvs[k], color));
+            }
+        }
+        for j in cells {
+            for i in 0..width - 1 {
+                let top = self.block_top(i, j, block);
+                let (x0, x1, z0, z1) = (self.xs[i], self.xs[i + 1], self.zs[j], self.zs[j + 1]);
+                let middle = Vec3::new((x0 + x1) / 2.0, top, (z0 + z1) / 2.0);
+                let index = j * width + i;
+                let (ground, flowers) = look(&self.sites[index], style);
+                // Coloured as the smooth ground there would be, by its own
+                // slope, so the blocks keep its greens, its rock and its sand.
+                let slope = normals[index];
+                let mountain = self.mountain[index];
+                let color = match (self.soil, ground, flowers) {
+                    (Soil::Floor, ..) => floor_vertex_color(middle),
+                    (_, _, Some(kind)) => self.meadow_color(middle, slope, kind),
+                    (_, Ground::Grass, _) => {
+                        let at = Vec2::new(middle.x, middle.z);
+                        let outside = (self.fine.0 - at).max(at - self.fine.1).max_element();
+                        let wild = smoothstep(0.0, WILD_REACH, outside).max(mountain);
+                        shaded(self.grass_tint(middle, slope, wild), self.grass_shade)
+                    }
+                    _ => ground_vertex_color(ground, middle, slope),
+                };
+                let color = if mountain > 0.0 {
+                    weathered(color, ground, middle, self.hollow[index], mountain)
+                } else {
+                    color
+                };
+                let builder = match (ground, flowers) {
+                    (Ground::Grass, Some(kind)) => {
+                        let meadow = match meadows.iter().position(|(k, _)| *k == kind) {
+                            Some(meadow) => meadow,
+                            None => {
+                                meadows.push((kind, Builder::default()));
+                                meadows.len() - 1
+                            }
+                        };
+                        &mut meadows[meadow].1
+                    }
+                    (Ground::Grass, None) => &mut grass,
+                    (Ground::Sand, _) => &mut sand,
+                    (Ground::Rock, _) => &mut rock,
+                    (Ground::Snow, _) => &mut snow,
+                };
+                let corners = [
+                    Vec3::new(x0, top, z0),
+                    Vec3::new(x0, top, z1),
+                    Vec3::new(x1, top, z0),
+                    Vec3::new(x1, top, z1),
+                ];
+                quad(
+                    builder,
+                    corners,
+                    Vec3::Y,
+                    corners.map(|c| Vec2::new(c.x, c.z)),
+                    color,
+                );
+                // The faces between it and the blocks east and south of it.
+                for (east, next) in [(true, (i + 1, j)), (false, (i, j + 1))] {
+                    if next.0 + 1 >= width || next.1 + 1 >= depth {
+                        continue;
+                    }
+                    let other = self.block_top(next.0, next.1, block);
+                    if other == top {
+                        continue;
+                    }
+                    let (low, high) = (top.min(other), top.max(other));
+                    // It faces the lower of the two.
+                    let toward = if east { Vec3::X } else { Vec3::Z };
+                    let normal = if top > other { toward } else { -toward };
+                    let (a, b) = if east {
+                        (Vec2::new(x1, z0), Vec2::new(x1, z1))
+                    } else {
+                        (Vec2::new(x0, z1), Vec2::new(x1, z1))
+                    };
+                    let corners = [
+                        Vec3::new(a.x, low, a.y),
+                        Vec3::new(a.x, high, a.y),
+                        Vec3::new(b.x, low, b.y),
+                        Vec3::new(b.x, high, b.y),
+                    ];
+                    let across = |c: Vec3| if east { c.z } else { c.x };
+                    let uvs = corners.map(|c| Vec2::new(across(c), -c.y));
+                    let face =
+                        ground_vertex_color(Ground::Rock, (corners[0] + corners[3]) / 2.0, normal);
+                    quad(&mut rock, corners, normal, uvs, face);
+                }
+            }
+        }
+        Band {
+            grass,
+            sand,
+            rock,
+            snow,
+            meadows,
+        }
+    }
+
     /// What the steep faces are made of.
     pub fn soil(&self) -> Soil {
         self.soil
@@ -821,7 +975,15 @@ impl Terrain {
             part.iter()
                 .map(|&band| {
                     let rows = band * BAND_ROWS..((band + 1) * BAND_ROWS).min(cells);
-                    (band, self.band(rows, &normals, style, side))
+                    let band_of = match self.voxel {
+                        // A circuit split between realms keeps its ground
+                        // smooth: its triangles are told apart by realm.
+                        Some(block) if side.is_none() => {
+                            self.voxel_band(rows, &normals, style, block)
+                        }
+                        _ => self.band(rows, &normals, style, side),
+                    };
+                    (band, band_of)
                 })
                 .collect()
         });
@@ -837,14 +999,8 @@ impl Terrain {
             snow,
             meadows,
         } = joined;
-        let rock_tile = match self.soil {
-            Soil::Rock | Soil::Mine | Soil::Granite | Soil::Lunar | Soil::Floor => ROCK_TILE,
-            Soil::Checkered => SOIL_TILE,
-        };
-        let grass_tile = match self.soil {
-            Soil::Floor => FLOOR_TILE,
-            _ => GRASS_TILE,
-        };
+        let tile = |ground: Ground| tile_of(ground, self.soil);
+        let (grass_tile, rock_tile) = (tile(Ground::Grass), tile(Ground::Rock));
         let layers = style.map(|style| match side {
             Some(side) if side != style => style.beyond_layers(),
             _ => style.layers(),
@@ -857,9 +1013,9 @@ impl Terrain {
         };
         let mut meshes = vec![
             ground(Ground::Grass, None, grass.build(grass_tile)),
-            ground(Ground::Sand, None, sand.build(SAND_TILE)),
+            ground(Ground::Sand, None, sand.build(tile(Ground::Sand))),
             ground(Ground::Rock, None, rock.build(rock_tile)),
-            ground(Ground::Snow, None, snow.build(GRASS_TILE)),
+            ground(Ground::Snow, None, snow.build(tile(Ground::Snow))),
         ];
         meshes.extend(
             meadows
@@ -903,8 +1059,13 @@ pub fn spawn_terrain(
             }
             _ => ground_look(ground, terrain.soil, textures),
         };
+        let tile = match flowers {
+            Some(_) => GRASS_TILE,
+            None => tile_of(ground, terrain.soil),
+        };
         let mut piece = world.spawn((
             GroundPiece,
+            GroundTile(tile),
             Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color_texture: texture.cloned(),
@@ -918,6 +1079,24 @@ pub fn spawn_terrain(
         }
     }
 }
+
+/// How many metres each repetition of the texture of `ground` (not in
+/// flower) on soil `soil` covers.
+fn tile_of(ground: Ground, soil: Soil) -> f32 {
+    match (ground, soil) {
+        (Ground::Grass, Soil::Floor) => FLOOR_TILE,
+        (Ground::Grass | Ground::Snow, _) => GRASS_TILE,
+        (Ground::Sand, _) => SAND_TILE,
+        (Ground::Rock, Soil::Checkered) => SOIL_TILE,
+        (Ground::Rock, _) => ROCK_TILE,
+    }
+}
+
+/// How many metres each repetition of a piece of the ground's texture
+/// covers (see [`tile_of`]): for the voxels to read it a voxel at a time
+/// (see [`super::voxel`]).
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct GroundTile(pub f32);
 
 /// What `ground` (not in flower) on soil `soil` is drawn with: its texture,
 /// how rough it is and how much it reflects.
@@ -2911,5 +3090,71 @@ pub mod tests {
             cut * 5 < whole,
             "{cut} wrong where whole triangles get {whole}"
         );
+    }
+    #[test]
+    fn a_circuit_s_look_reads_from_its_file() {
+        use crate::world::scenery::Look;
+        assert_eq!(Look::default(), Look::Smooth);
+        assert_eq!(Look::Smooth.voxel_size(), None);
+        let look: Look = ron::from_str("Voxel(size: 0.5)").unwrap();
+        assert_eq!((look.voxel_size(), look.voxel_steps()), (Some(0.5), None));
+        let look: Look = ron::from_str("Voxel(size: 0.5, steps: Some(1.75))").unwrap();
+        assert_eq!(look.voxel_steps(), Some(1.75));
+        // Never so small they are no voxels, nor steps, at all.
+        let tiny = Look::Voxel {
+            size: 0.0,
+            steps: Some(0.0),
+            shades: Some(1),
+        };
+        assert_eq!(
+            (tiny.voxel_size(), tiny.voxel_steps(), tiny.voxel_shades()),
+            (Some(0.05), Some(0.25), Some(2))
+        );
+        let look: Look = ron::from_str("Voxel(size: 0.25, shades: Some(12))").unwrap();
+        assert_eq!(look.voxel_shades(), Some(12));
+        assert!(ron::from_str::<Look>("Voxel(size: 0.5, block: 3.0)").is_err());
+    }
+
+    #[test]
+    fn in_blocks_the_ground_is_level_tops_and_sheer_faces_never_over_it() {
+        let (_, mut terrain) = bay();
+        let block = 1.75;
+        terrain.voxel = Some(block);
+        let meshes = terrain.meshes(4);
+        let attribute = |mesh: &Mesh, id| match mesh.attribute(id) {
+            Some(bevy::mesh::VertexAttributeValues::Float32x3(values)) => values.clone(),
+            other => panic!("{other:?}"),
+        };
+        let (mut tops, mut faces) = (0, 0);
+        for piece in &meshes {
+            let positions = attribute(&piece.mesh, Mesh::ATTRIBUTE_POSITION);
+            let normals = attribute(&piece.mesh, Mesh::ATTRIBUTE_NORMAL);
+            for (p, n) in positions.iter().zip(&normals) {
+                let (p, n) = (Vec3::from_array(*p), Vec3::from_array(*n));
+                if n == Vec3::Y {
+                    tops += 1;
+                    // At a whole number of steps, and never over the smooth
+                    // ground (nor the road on it) at its corner.
+                    let steps = p.y / block;
+                    assert!((steps - steps.round()).abs() < 1e-3, "{p}");
+                    assert!(p.y <= terrain.height(Vec2::new(p.x, p.z)) + 1e-3, "{p}");
+                } else {
+                    // A sheer face, of rock, facing across.
+                    assert_eq!(n.y, 0.0, "{n}");
+                    assert!(n.x.abs() == 1.0 || n.z.abs() == 1.0, "{n}");
+                    assert_eq!(piece.ground, Ground::Rock);
+                    faces += 1;
+                }
+            }
+        }
+        assert!(tops > 0 && faces > 0, "{tops} tops, {faces} faces");
+        // Smooth, it is as it was: no level tops but where the ground is.
+        terrain.voxel = None;
+        let smooth: usize = terrain
+            .meshes(4)
+            .iter()
+            .map(|m| m.mesh.count_vertices())
+            .sum();
+        assert!(smooth > 0);
     }
 }
