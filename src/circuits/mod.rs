@@ -191,11 +191,25 @@ impl Circuits {
     /// The circuits the `files` hold (each its path and its text, in the
     /// menu's order), or what is wrong with them.
     pub fn parse(files: &[(String, &'static str)]) -> Result<Self, String> {
+        Self::parse_shaped(files, None)
+    }
+
+    /// The same, the ground of circuit `index` shaped as `sculpt` says
+    /// instead of as its companion does (the map editor's, not yet saved:
+    /// see [`crate::editor`]).
+    pub fn parse_shaped(
+        files: &[(String, &'static str)],
+        shaped: Option<(usize, &'static crate::world::sculpt::Sculpt)>,
+    ) -> Result<Self, String> {
         let circuits = files
             .iter()
-            .map(|(path, text)| {
+            .enumerate()
+            .map(|(index, (path, text))| {
                 let mut circuit: Circuit = data::parse(path, text)?;
-                circuit.scenery.sculpt = sculpt_of(path)?;
+                circuit.scenery.sculpt = match shaped {
+                    Some((shaped, sculpt)) if shaped == index => Some(sculpt),
+                    _ => sculpt_of(path)?,
+                };
                 Ok(circuit)
             })
             .collect::<Result<Vec<Circuit>, String>>()?;

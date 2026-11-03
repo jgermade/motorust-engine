@@ -27,14 +27,15 @@ pub fn companion(circuit_file: &str) -> String {
 pub const CELL: f32 = 2.0;
 /// The file's first bytes, and its version.
 const MAGIC: &[u8; 4] = b"MRSC";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 /// The most a point is raised or lowered (m): what a file's centimetres
 /// hold.
 pub const MOST: f32 = 327.0;
 
 /// How much higher (or lower) the ground is at each point of a regular
 /// grid, from `origin` (x, z) `cell` m apart, `width` points across (x) and
-/// `depth` down (z), by rows.
+/// `depth` down (z), by rows; and what ground each point was painted as, if
+/// any (see [`Paint`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sculpt {
     pub origin: Vec2,
@@ -42,6 +43,58 @@ pub struct Sculpt {
     pub width: usize,
     pub depth: usize,
     pub heights: Vec<f32>,
+    pub paint: Vec<Paint>,
+}
+
+/// What the ground at a point was painted as: as the land makes it (its
+/// slope, its height, by the sea), or grass, sand or rock whatever it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Paint {
+    #[default]
+    Land,
+    Grass,
+    Sand,
+    Rock,
+}
+
+impl Paint {
+    fn byte(self) -> u8 {
+        match self {
+            Paint::Land => 0,
+            Paint::Grass => 1,
+            Paint::Sand => 2,
+            Paint::Rock => 3,
+        }
+    }
+
+    fn of(byte: u8) -> Self {
+        match byte {
+            1 => Paint::Grass,
+            2 => Paint::Sand,
+            3 => Paint::Rock,
+            _ => Paint::Land,
+        }
+    }
+
+    /// The ground it paints, if any.
+    pub fn ground(self) -> Option<super::terrain::Ground> {
+        use super::terrain::Ground;
+        match self {
+            Paint::Land => None,
+            Paint::Grass => Some(Ground::Grass),
+            Paint::Sand => Some(Ground::Sand),
+            Paint::Rock => Some(Ground::Rock),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Paint::Land => "unpaint",
+            Paint::Grass => "grass",
+            Paint::Sand => "sand",
+            Paint::Rock => "rock",
+        }
+    }
 }
 
 impl Sculpt {
@@ -55,6 +108,7 @@ impl Sculpt {
             width,
             depth,
             heights: vec![0.0; width * depth],
+            paint: vec![Paint::Land; width * depth],
         }
     }
 
@@ -81,9 +135,23 @@ impl Sculpt {
         near.lerp(far, tz)
     }
 
-    /// Whether anything is shaped.
+    /// Whether anything is shaped or painted.
     pub fn is_flat(&self) -> bool {
-        self.heights.iter().all(|&h| h == 0.0)
+        self.heights.iter().all(|&h| h == 0.0) && self.paint.iter().all(|&p| p == Paint::Land)
+    }
+
+    /// What the ground at `point` was painted as: the nearest point of the
+    /// grid's (as the land makes it off the grid).
+    pub fn paint_at(&self, point: Vec2) -> Paint {
+        let local = ((point - self.origin) / self.cell).round();
+        if local.x < 0.0 || local.y < 0.0 {
+            return Paint::Land;
+        }
+        let (i, j) = (local.x as usize, local.y as usize);
+        if i >= self.width || j >= self.depth {
+            return Paint::Land;
+        }
+        self.paint[j * self.width + i]
     }
 
     /// The grid's points within `radius` of `center`: their indices in
@@ -119,11 +187,22 @@ impl Sculpt {
         let weight = |p: Vec2| brush.weight(p.distance(center));
         let rate = |p: Vec2| (brush.strength * dt * weight(p) / 4.0).min(1.0);
         let now = |sculpt: &Self, index: usize, p: Vec2| ground(p) + sculpt.heights[index];
+        // Painting: the points the brush covers over its inner part and a
+        // little more, painted.
+        if let Tool::Paint(paint) = brush.tool {
+            for &(index, p) in &points {
+                if weight(p) > 0.3 {
+                    self.paint[index] = paint;
+                }
+            }
+            return;
+        }
         let changes: Vec<(usize, f32)> = points
             .iter()
             .map(|&(index, p)| {
                 let h = self.heights[index];
                 let next = match brush.tool {
+                    Tool::Paint(_) => h,
                     Tool::Raise => h + brush.strength * dt * weight(p),
                     Tool::Lower => h - brush.strength * dt * weight(p),
                     Tool::Restore => h * (1.0 - rate(p)),
@@ -155,8 +234,9 @@ impl Sculpt {
     }
 
     /// As the file has it: its header (the magic, the version, the origin,
-    /// the cell, the width and the depth) and a height a point, in
-    /// centimetres, all little-endian.
+    /// the cell, the width and the depth), a height a point, in
+    /// centimetres, all little-endian, and a byte a point for its paint
+    /// (since version 2).
     pub fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(28 + 2 * self.heights.len());
         bytes.extend_from_slice(MAGIC);
@@ -173,6 +253,7 @@ impl Sculpt {
                 .clamp(i16::MIN as f32, i16::MAX as f32);
             bytes.extend_from_slice(&(centimetres as i16).to_le_bytes());
         }
+        bytes.extend(self.paint.iter().map(|paint| paint.byte()));
         bytes
     }
 
@@ -188,7 +269,7 @@ impl Sculpt {
             return Err("not a terrain's shaping".into());
         }
         let version = u32::from_le_bytes(word(4)?);
-        if version != VERSION {
+        if !(1..=VERSION).contains(&version) {
             return Err(format!("version {version}, not {VERSION}"));
         }
         let float = |at: usize| word(at).map(f32::from_le_bytes);
@@ -196,22 +277,34 @@ impl Sculpt {
         let width = u32::from_le_bytes(word(20)?) as usize;
         let depth = u32::from_le_bytes(word(24)?) as usize;
         let body = &bytes[28..];
-        if body.len() != 2 * width * depth || cell.is_nan() || cell <= 0.0 {
+        let count = width * depth;
+        // Version 1 had no paint.
+        let paint_bytes = if version >= 2 { count } else { 0 };
+        if body.len() != 2 * count + paint_bytes || cell.is_nan() || cell <= 0.0 {
             return Err(format!(
                 "{width} by {depth} points, {} bytes of them",
                 body.len()
             ));
         }
-        let heights = body
+        let heights = body[..2 * count]
             .chunks_exact(2)
             .map(|pair| i16::from_le_bytes([pair[0], pair[1]]) as f32 / 100.0)
             .collect();
+        let paint = if version >= 2 {
+            body[2 * count..]
+                .iter()
+                .map(|&byte| Paint::of(byte))
+                .collect()
+        } else {
+            vec![Paint::Land; count]
+        };
         Ok(Self {
             origin: Vec2::new(x, z),
             cell,
             width,
             depth,
             heights,
+            paint,
         })
     }
 }
@@ -226,16 +319,27 @@ pub enum Tool {
     Flatten,
     /// Back toward the land as its scenery makes it.
     Restore,
+    /// The ground painted (see [`Paint`]).
+    Paint(Paint),
 }
 
 impl Tool {
-    pub const ALL: [Tool; 5] = [
+    pub const ALL: [Tool; 9] = [
         Tool::Raise,
         Tool::Lower,
         Tool::Smooth,
         Tool::Flatten,
         Tool::Restore,
+        Tool::Paint(Paint::Grass),
+        Tool::Paint(Paint::Sand),
+        Tool::Paint(Paint::Rock),
+        Tool::Paint(Paint::Land),
     ];
+
+    /// Whether it paints rather than shapes.
+    pub fn paints(self) -> bool {
+        matches!(self, Tool::Paint(_))
+    }
 
     pub fn name(self) -> &'static str {
         match self {
@@ -244,6 +348,7 @@ impl Tool {
             Tool::Smooth => "smooth",
             Tool::Flatten => "flatten",
             Tool::Restore => "restore",
+            Tool::Paint(paint) => paint.name(),
         }
     }
 }
@@ -382,6 +487,41 @@ mod tests {
             sculpt.apply(&brush(Tool::Restore), Vec2::ZERO, 0.1, |_| 0.0, 0.0);
         }
         assert!(sculpt.at(Vec2::ZERO).abs() < 0.01);
+    }
+
+    #[test]
+    fn painting_covers_the_brush_and_unpainting_takes_it_off() {
+        let mut sculpt = grid();
+        let paint = |paint| Brush {
+            tool: Tool::Paint(paint),
+            ..brush(Tool::Raise)
+        };
+        sculpt.apply(&paint(Paint::Sand), Vec2::ZERO, 0.1, |_| 0.0, 0.0);
+        assert_eq!(sculpt.paint_at(Vec2::ZERO), Paint::Sand);
+        assert_eq!(sculpt.paint_at(Vec2::new(10.0, 0.0)), Paint::Sand);
+        assert_eq!(sculpt.paint_at(Vec2::new(30.0, 0.0)), Paint::Land);
+        assert_eq!(sculpt.paint_at(Vec2::new(500.0, 0.0)), Paint::Land);
+        assert_eq!(sculpt.at(Vec2::ZERO), 0.0, "painting shapes nothing");
+        assert!(!sculpt.is_flat());
+        sculpt.apply(&paint(Paint::Land), Vec2::ZERO, 0.1, |_| 0.0, 0.0);
+        assert!(sculpt.is_flat());
+        assert_eq!(
+            Paint::Rock.ground(),
+            Some(super::super::terrain::Ground::Rock)
+        );
+        assert_eq!(Paint::Land.ground(), None);
+    }
+
+    #[test]
+    fn a_file_of_the_first_version_reads_with_no_paint() {
+        let mut sculpt = grid();
+        sculpt.heights[5] = 1.5;
+        let mut bytes = sculpt.encode();
+        bytes[4..8].copy_from_slice(&1u32.to_le_bytes());
+        bytes.truncate(bytes.len() - sculpt.width * sculpt.depth);
+        let read = Sculpt::decode(&bytes).unwrap();
+        assert_eq!(read.heights[5], 1.5);
+        assert!(read.paint.iter().all(|&p| p == Paint::Land));
     }
 
     #[test]

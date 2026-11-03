@@ -153,6 +153,8 @@ pub struct Terrain {
     /// The dams' lakes, whose water stands over the sea's (see
     /// [`Terrain::water_level`]).
     lakes: Vec<DamGround>,
+    /// The ground as shaped and painted by hand (see [`super::sculpt`]).
+    sculpt: Option<&'static super::sculpt::Sculpt>,
 }
 
 /// A piece of the ground in the world: one of its meshes, each over the
@@ -258,10 +260,22 @@ impl Terrain {
             .collect();
         let soil = scenery.soil;
         let turf = scenery.turf;
+        let sculpt = scenery.sculpt;
+        let painted =
+            |p: Vec3| sculpt.and_then(|sculpt| sculpt.paint_at(Vec2::new(p.x, p.z)).ground());
         let sites = on_cores(&grid, threads, |part: &[(Vec3, f32, f32, f32)]| {
             part.iter()
                 .map(|&(p, hollow, mountain, up)| {
-                    site(p, soil, flowers.as_ref(), turf, hollow, mountain, up)
+                    site(
+                        p,
+                        soil,
+                        flowers.as_ref(),
+                        turf,
+                        hollow,
+                        mountain,
+                        up,
+                        painted(p),
+                    )
                 })
                 .collect::<Vec<_>>()
         });
@@ -281,6 +295,7 @@ impl Terrain {
             greens: scenery.greens,
             grass_shade: scenery.grass_shade,
             lakes: shaper.dams,
+            sculpt: scenery.sculpt,
         }
     }
 
@@ -372,6 +387,12 @@ impl Terrain {
     }
 
     pub fn ground(&self, point: Vec2) -> Ground {
+        if let Some(painted) = self
+            .sculpt
+            .and_then(|sculpt| sculpt.paint_at(point).ground())
+        {
+            return painted;
+        }
         let ground = classify(
             Vec3::new(point.x, self.height(point), point.y),
             self.normal(point),
@@ -437,6 +458,8 @@ impl Terrain {
             self.on_grid(&self.hollow, point),
             self.on_grid(&self.mountain, point),
             self.on_grid(&self.up, point),
+            self.sculpt
+                .and_then(|sculpt| sculpt.paint_at(point).ground()),
         )
     }
 
@@ -1038,11 +1061,15 @@ struct Site {
     up: f32,
     /// Whether this point lies on the Moon's airless regolith (no grass or snow).
     lunar: bool,
+    /// What its ground was painted as by hand, if anything (see
+    /// [`super::sculpt::Paint`]).
+    painted: Option<Ground>,
 }
 
 /// What the look of the ground at `p` (x, height, z) turns on but the way
 /// it faces, where the grass is in `flowers` and is `turf`, `hollow` down a
 /// gully of a mountain across the sea and `mountain` its share of it.
+#[allow(clippy::too_many_arguments)]
 fn site(
     p: Vec3,
     soil: Soil,
@@ -1051,6 +1078,7 @@ fn site(
     hollow: f32,
     mountain: f32,
     up: f32,
+    painted: Option<Ground>,
 ) -> Site {
     let (snow_line, tree_line) = lines(p, hollow);
     let ground = Vec2::new(p.x, p.z);
@@ -1066,6 +1094,7 @@ fn site(
             .map(|turf| turf.steepest),
         up: up + CLIFF_RAGGED * 2.0 * (fbm(ground / 13.0 + Vec2::splat(5.0), 2) - 0.5),
         lunar: soil == Soil::Lunar && !is_earth_realm(ground),
+        painted,
     }
 }
 
@@ -1109,6 +1138,9 @@ fn look(site: &Site, style: Option<Realm>) -> Look {
     let lunar = style.map_or(site.lunar, |style| style == Realm::Moon);
     if lunar && ground != Ground::Rock {
         ground = Ground::Sand;
+    }
+    if let Some(painted) = site.painted {
+        ground = painted;
     }
     let flowers = if ground == Ground::Grass {
         site.flowers

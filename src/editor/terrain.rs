@@ -1,17 +1,20 @@
 //! The editor's terrain mode, as a theme park game's terrain editor works:
 //! a round brush on the ground under the cursor, drawn over it, that
-//! raises, lowers, smooths, flattens or restores the ground while the left
+//! raises, lowers, smooths, flattens or restores the ground, or paints it
+//! grass, sand or rock (or as the land makes it again), while the left
 //! button is held, bigger or smaller, stronger or weaker
 //! ([`crate::world::sculpt::Brush`]). The ground's meshes are shaped in place
-//! as it goes, the ground beside the roads left to them; saved, the shaping
-//! goes into the circuit's companion file (see [`crate::world::sculpt`]),
-//! and the circuit is built anew with it (its trees, its grass and what
-//! stands on the ground on it).
+//! as it goes, the ground beside the roads left to them; a moment after a
+//! stroke the circuit is built anew with what was shaped and painted, not
+//! yet saved ([`rebuild_live`]: its ground's kinds, its trees, its grass),
+//! the world before it kept in sight meanwhile. Saved, the shaping goes
+//! into the circuit's companion file (see [`crate::world::sculpt`]).
 //!
 //! | | |
 //! |---|---|
 //! | M | the terrain mode, or back to the lap |
 //! | 1 to 5 | raise, lower, smooth, flatten, restore |
+//! | 6 to 9 | paint grass, sand, rock; unpaint |
 //! | left button | the brush, while held |
 //! | [ / ], or Shift+wheel | the brush smaller / bigger |
 //! | , / . , or Ctrl+wheel | the brush weaker / stronger |
@@ -27,10 +30,11 @@ use bevy::window::PrimaryWindow;
 use super::Editor;
 use crate::camera::CameraPlayer;
 use crate::circuits::Circuits;
+use crate::circuits::reload::CircuitsReloaded;
 use crate::track::Track;
-use crate::world::sculpt::{Brush, CELL, Sculpt, Tool};
+use crate::world::sculpt::{Brush, CELL, Paint, Sculpt, Tool};
 use crate::world::terrain::{FINE_MARGIN, GroundPiece, Terrain, sculpt_reach};
-use crate::world::{BuiltTerrains, WorldRoot};
+use crate::world::{BuiltTerrains, Superseded, WorldRoot};
 
 /// The terrain mode at work: whether it is on, the shaping as it is now and
 /// as the circuit was built with it, the brush, the strokes to undo and
@@ -54,7 +58,17 @@ pub struct Shaping {
     /// it is first needed), by mesh.
     built_heights: HashMap<AssetId<Mesh>, Vec<f32>>,
     reach: HashMap<AssetId<Mesh>, Vec<f32>>,
+    /// When the circuit is to be built anew with what was shaped (s, real
+    /// time): a moment after a stroke.
+    settle: Option<f32>,
+    /// The shaping a new world is being built with, and the terrain it
+    /// replaces (to tell when it has come).
+    /// (Told by its address alone: it is never read through.)
+    pending: Option<(&'static Sculpt, usize)>,
 }
+
+/// How long after a stroke the circuit is built anew with it (s).
+const SETTLE: f32 = 0.8;
 
 /// The most strokes kept to undo.
 const UNDO_DEPTH: usize = 30;
@@ -181,6 +195,10 @@ pub fn shaping_keys(
         KeyCode::Digit3,
         KeyCode::Digit4,
         KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
     ]
     .into_iter()
     .zip(Tool::ALL)
@@ -229,7 +247,7 @@ pub fn brush_the_ground(
     editor: Res<Editor>,
     built_terrains: Res<BuiltTerrains>,
     track: Res<Track>,
-    roots: Query<(&WorldRoot, &Children)>,
+    roots: Query<(&WorldRoot, &Children, Has<Superseded>)>,
     pieces: Query<&Mesh3d, With<GroundPiece>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut shaping: ResMut<Shaping>,
@@ -255,8 +273,9 @@ pub fn brush_the_ground(
         ground_now(&terrain, &shaping, p)
     });
     shaping.cursor = cursor;
-    if buttons.just_released(MouseButton::Left) {
+    if buttons.just_released(MouseButton::Left) && shaping.stroke.is_some() {
         shaping.stroke = None;
+        shaping.settle = Some(time.elapsed_secs() + SETTLE);
     }
     let Some(at) = shaping.cursor else {
         return;
@@ -285,8 +304,17 @@ pub fn brush_the_ground(
         sculpt.apply(&brush, center, time.delta_secs(), unshaped, level);
     }
     shaping.changed = true;
-    // The ground's meshes, in place, round the brush.
-    let Some((_, children)) = roots.iter().find(|(root, _)| root.0 == editor.circuit) else {
+    // Painting shows when the circuit is built anew; shaping, at once.
+    if brush.tool.paints() {
+        return;
+    }
+    // The ground's meshes, in place, round the brush: those in sight (the
+    // world being replaced, while a new one is built).
+    let Some((_, children, _)) = roots
+        .iter()
+        .filter(|(root, _, _)| root.0 == editor.circuit)
+        .max_by_key(|(_, _, superseded)| *superseded)
+    else {
         return;
     };
     let reach = brush.radius + 2.0 * CELL;
@@ -378,6 +406,66 @@ fn shape_mesh(
     }
 }
 
+/// A moment after a stroke, the circuit built anew with what was shaped
+/// and painted, not saved: new circuits made from their files as read, the
+/// one edited shaped as the editor has it, and the world told it was read
+/// again (it keeps the one in sight till the new one is whole, see
+/// `crate::world::Superseded`). The new world's terrain, once it comes, is
+/// the one the editor shapes from.
+pub fn rebuild_live(
+    time: Res<Time<Real>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    editor: Res<Editor>,
+    built_terrains: Res<BuiltTerrains>,
+    mut circuits: ResMut<Circuits>,
+    mut reloaded: MessageWriter<CircuitsReloaded>,
+    mut shaping: ResMut<Shaping>,
+) {
+    let terrain = built_terrains
+        .0
+        .get(&editor.circuit)
+        .map(|terrain| Arc::as_ptr(terrain) as usize);
+    // The new world has come: its terrain is shaped as `built` says.
+    if let Some((built, before)) = shaping.pending
+        && terrain.is_some_and(|terrain| terrain != before)
+    {
+        shaping.pending = None;
+        shaping.built = Some(built);
+        shaping.built_heights.clear();
+        shaping.reach.clear();
+        // Shaped further meanwhile: again.
+        if shaping.sculpt.as_ref() != Some(built) {
+            shaping.settle = Some(time.elapsed_secs());
+        }
+    }
+    let Some(at) = shaping.settle else {
+        return;
+    };
+    if time.elapsed_secs() < at || buttons.pressed(MouseButton::Left) || shaping.pending.is_some() {
+        return;
+    }
+    shaping.settle = None;
+    let (Some(sculpt), Some(terrain)) = (shaping.sculpt.clone(), terrain) else {
+        return;
+    };
+    let sculpt: &'static Sculpt = Box::leak(Box::new(sculpt));
+    match crate::circuits::files()
+        .and_then(|files| Circuits::parse_shaped(&files, Some((editor.circuit, sculpt))))
+    {
+        Ok(new) => {
+            *circuits = new;
+            reloaded.write(CircuitsReloaded(vec![editor.circuit]));
+            shaping.pending = Some((sculpt, terrain));
+        }
+        Err(error) => warn!("editor: the circuit was not built anew: {error}"),
+    }
+}
+
+/// Whether the circuit is being built anew with what was shaped.
+pub fn rebuilding(shaping: &Shaping) -> bool {
+    shaping.pending.is_some() || shaping.settle.is_some()
+}
+
 /// Colours of the brush by its tool.
 fn tool_color(tool: Tool) -> Color {
     match tool {
@@ -386,6 +474,17 @@ fn tool_color(tool: Tool) -> Color {
         Tool::Smooth => Color::srgb(0.4, 0.75, 1.0),
         Tool::Flatten => Color::srgb(1.0, 0.9, 0.3),
         Tool::Restore => Color::srgb(0.9, 0.9, 0.9),
+        Tool::Paint(paint) => paint_color(paint),
+    }
+}
+
+/// Colours of the paints, as drawn over the ground.
+fn paint_color(paint: Paint) -> Color {
+    match paint {
+        Paint::Grass => Color::srgb(0.2, 0.85, 0.2),
+        Paint::Sand => Color::srgb(1.0, 0.85, 0.45),
+        Paint::Rock => Color::srgb(0.6, 0.6, 0.65),
+        Paint::Land => Color::srgb(1.0, 0.3, 0.8),
     }
 }
 
@@ -414,6 +513,39 @@ pub fn draw_brush(
         gizmos.linestrip(ring, color.with_alpha(alpha));
     }
     gizmos.line(at, at + Vec3::Y * shaping.brush.radius * 0.3, color);
+    // Painting, the ground painted round the brush, as it is painted (it
+    // shows on the ground once the circuit is built anew).
+    if shaping.brush.tool.paints()
+        && let Some(sculpt) = &shaping.sculpt
+    {
+        let reach = shaping.brush.radius * 2.0;
+        let step = (shaping.brush.radius / 8.0).max(sculpt.cell);
+        let steps = (reach / step) as i32;
+        for j in -steps..=steps {
+            for i in -steps..=steps {
+                let p = center + Vec2::new(i as f32, j as f32) * step;
+                if p.distance(center) > reach {
+                    continue;
+                }
+                let paint = sculpt.paint_at(p);
+                if paint == Paint::Land {
+                    continue;
+                }
+                let base = Vec3::new(p.x, ground_now(terrain, &shaping, p) + 0.4, p.y);
+                let half = step * 0.3;
+                gizmos.line(
+                    base - Vec3::X * half,
+                    base + Vec3::X * half,
+                    paint_color(paint),
+                );
+                gizmos.line(
+                    base - Vec3::Z * half,
+                    base + Vec3::Z * half,
+                    paint_color(paint),
+                );
+            }
+        }
+    }
 }
 
 /// What the terrain mode says, for the editor's text.
@@ -433,8 +565,13 @@ pub fn shaping_text(shaping: &Shaping) -> String {
         })
         .collect();
     format!(
-        "Mode: TERRAIN{} (M for the lap): {}; brush {:.0} m ([ ] or Shift+wheel), strength {:.1} (, . or Ctrl+wheel); left button shapes",
+        "Mode: TERRAIN{}{} (M for the lap): {}\nBrush {:.0} m ([ ] or Shift+wheel), strength {:.1} (, . or Ctrl+wheel); left button shapes or paints",
         if shaping.changed { ", shaped" } else { "" },
+        if rebuilding(shaping) {
+            ", building the circuit anew"
+        } else {
+            ""
+        },
         tools.join("  "),
         shaping.brush.radius,
         shaping.brush.strength,

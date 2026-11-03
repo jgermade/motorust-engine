@@ -518,6 +518,7 @@ impl Plugin for EditorPlugin {
                     steer_view,
                     pick_and_drag,
                     terrain::brush_the_ground,
+                    terrain::rebuild_live,
                     edit_keys,
                     lay_out_whole,
                     place_camera,
