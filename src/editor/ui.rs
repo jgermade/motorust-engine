@@ -1015,11 +1015,29 @@ pub fn spawn_ui(mut commands: Commands, font: Res<UiFont>, settings: Option<Res<
                                                 .collect(),
                                         };
                                         for (keys, label) in lines {
-                                            group.spawn((
-                                                Text::new(format!("{keys:<10}  {label}")),
-                                                crate::ui::text_font(font, 13.0),
-                                                TextColor(DIM),
-                                            ));
+                                            group
+                                                .spawn(Node {
+                                                    flex_direction: FlexDirection::Row,
+                                                    column_gap: px(8),
+                                                    ..default()
+                                                })
+                                                .with_children(|line| {
+                                                    line.spawn((
+                                                        Text::new(keys),
+                                                        crate::ui::text_font(font, 13.0),
+                                                        TextColor(Color::WHITE),
+                                                        Node {
+                                                            width: px(92),
+                                                            flex_shrink: 0.0,
+                                                            ..default()
+                                                        },
+                                                    ));
+                                                    line.spawn((
+                                                        Text::new(label),
+                                                        crate::ui::text_font(font, 13.0),
+                                                        TextColor(DIM),
+                                                    ));
+                                                });
                                         }
                                     });
                             }
