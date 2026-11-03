@@ -353,6 +353,12 @@ const PICK_REACH: f32 = 18.0;
 /// How high over the ground its post is drawn (m).
 const POST: f32 = 10.0;
 
+/// How high the posts are drawn (and picked) from `view`: as big on the
+/// screen however far the camera is.
+fn post_height(view: &super::view::View) -> f32 {
+    (view.distance * 0.03).max(POST)
+}
+
 /// The mouse and the keys in the roadside mode.
 #[allow(clippy::too_many_arguments)]
 pub fn roadside_input(
@@ -363,6 +369,7 @@ pub fn roadside_input(
     camera: Query<(&Camera, &GlobalTransform), With<CameraPlayer>>,
     track: Res<Track>,
     built_terrains: Res<BuiltTerrains>,
+    view: Res<super::view::View>,
     mut editor: ResMut<Editor>,
     mut shaping: ResMut<Shaping>,
 ) {
@@ -436,7 +443,7 @@ pub fn roadside_input(
                 .placed
                 .iter()
                 .map(|p| {
-                    let at = spot(&track, p.along, p.side, p.kind) + Vec3::Y * POST;
+                    let at = spot(&track, p.along, p.side, p.kind) + Vec3::Y * post_height(&view);
                     camera.world_to_viewport(camera_at, at).ok()
                 })
                 .collect();
@@ -485,10 +492,18 @@ fn kind_color(kind: Kind) -> Color {
 /// What stands by the road, drawn where it stands: a post up from the
 /// ground (an arch, a bar across the road), the one picked yellow and
 /// taller.
-pub fn draw_roadside(editor: Res<Editor>, track: Res<Track>, mut gizmos: Gizmos) {
+pub fn draw_roadside(
+    editor: Res<Editor>,
+    track: Res<Track>,
+    view: Res<super::view::View>,
+    mut gizmos: Gizmos,
+) {
     if editor.mode != Mode::Roadside || track.sample_count() == 0 {
         return;
     }
+    // As big on the screen however far the camera is.
+    let post = post_height(&view);
+    let ball = view.distance * 0.008;
     for (k, placed) in editor.roadside.placed.iter().enumerate() {
         let picked = editor.roadside.selected == Some(k);
         let color = if picked {
@@ -497,16 +512,16 @@ pub fn draw_roadside(editor: Res<Editor>, track: Res<Track>, mut gizmos: Gizmos)
             kind_color(placed.kind)
         };
         let base = spot(&track, placed.along, placed.side, placed.kind);
-        let top = base + Vec3::Y * POST * if picked { 1.6 } else { 1.0 };
+        let top = base + Vec3::Y * post * if picked { 1.6 } else { 1.0 };
         gizmos.line(base, top, color);
-        gizmos.sphere(Isometry3d::from_translation(top), 2.0, color);
+        gizmos.sphere(Isometry3d::from_translation(top), ball, color);
         if !placed.kind.sided() {
             let index =
                 ((placed.along / track.step_length()).round() as usize) % track.sample_count();
             let wall = track.wall_at(index);
             let (left, right) = (
-                track.surface_point(index, wall) + Vec3::Y * POST,
-                track.surface_point(index, -wall) + Vec3::Y * POST,
+                track.surface_point(index, wall) + Vec3::Y * post,
+                track.surface_point(index, -wall) + Vec3::Y * post,
             );
             gizmos.line(left, right, color);
         }

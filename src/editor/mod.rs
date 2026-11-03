@@ -1486,7 +1486,7 @@ fn show_text(
          Lap {:.0} m, {} points, {} marks, {} stretches of banking; tightest bend {:.1} m (at least {:.1}), steepest grade {:.1} % (under {:.0})\n\
          {limits}\n\
          {}\n\
-         Picked: {}{hover}\n\
+         {}{hover}\n\
          Mouse: left picks and drags (points on the map, marks and banking's ends on the panel), right moves, wheel zooms. \
          WASD move, Q/E turn, R/F tilt, Tab next, N add, Del remove, B banking at the cursor, [ ] factor, T raised, G/Shift+G grip, \
          Ctrl+Z/Y undo/redo, Ctrl+S save, PgUp/PgDn circuit, Home all, Esc back\n\
@@ -1509,7 +1509,11 @@ fn show_text(
             Mode::Roadside => roadside::roadside_text(&editor.roadside),
             _ => terrain::shaping_text(&shaping),
         },
-        picked_text(&editor.edit, editor.lap()),
+        if editor.mode == Mode::Lap {
+            format!("Picked: {}", picked_text(&editor.edit, editor.lap()))
+        } else {
+            String::new()
+        },
         editor.message,
     );
 }

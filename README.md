@@ -97,9 +97,29 @@ grid of heights 2 m apart over the land the scenery makes
 kinds (a steep hill is rock), its trees and its grass where the ground now
 is.
 
-What stands along the road, painting the ground's kinds, the stretches of
-the scenery, the branches and the crests the bike takes off over are still
-to come.
+In the terrain mode 6 to 9 paint the ground grass, sand or rock, or as
+the land makes it again (a byte a point of the companion's grid, read by
+the terrain where it chooses each piece of ground). A moment after each
+stroke (and each change in the roadside mode), the circuit is built anew
+with what was shaped, painted and placed, not yet saved: its ground's kinds,
+its trees and its grass where the ground now is; the world before it is
+kept in sight till the new one is whole (`world::Superseded`).
+
+M again goes to the roadside mode: what stands by the road at a distance
+along the lap (arches, checkpoints among them; billboards; chevron signs;
+brake markers; grandstands), drawn as posts where they stand. 1 to 5
+choose what N adds where the cursor is; the left button picks one and
+drags it along the road, to the side the cursor is on; X turns it to the
+other side, Delete takes it out, Tab goes to the next, Ctrl+Z and Ctrl+Y
+undo and redo. Saved, each list is written in place of its own, the items
+as they were but for where they stand (their texts, colours and comments
+kept), new ones from a template (a checkpoint's arch, a billboard of the
+game's name, a chevron pointing round the bend, a brake marker at 100 m, a
+grandstand); a list the file has not is added after its kerbs' colours.
+
+The stretches of the scenery (walls, tunnels, bridges, rows of lamps and
+palms), the branches and the crests the bike takes off over are still to
+come.
 
 ## Tools
 
