@@ -25,6 +25,7 @@ pub mod realm;
 pub mod relief;
 pub mod road;
 pub mod scenery;
+pub mod sculpt;
 pub mod sea;
 mod shadow_fade;
 pub mod shoulders;
@@ -123,6 +124,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<Finishing>()
             .init_resource::<Previewing>()
             .init_resource::<PreviewRoots>()
+            .init_resource::<BuiltTerrains>()
             .init_resource::<CircuitLoading>()
             .init_resource::<textures::WorldTextures>()
             .init_resource::<prop_pack::PropPacks>()
@@ -198,6 +200,13 @@ impl Roadside {
 /// Cada circuito cargado tiene su entidad raíz con su índice en [`Circuits`].
 #[derive(Component, Debug, PartialEq, Eq)]
 pub struct WorldRoot(pub usize);
+
+/// A circuit's world read again in the map editor, kept in sight while the
+/// new one is built, and taken away once the new one is whole (its trees,
+/// its grass), so that the editor is never left looking at nothing (see
+/// [`forget_reloaded_circuits`] and [`spawn_prepared_circuit`]).
+#[derive(Component, Debug)]
+pub struct Superseded;
 
 /// The mesh of the sea, the same for every circuit.
 #[derive(Resource)]
@@ -561,7 +570,7 @@ fn menu_distance(a: usize, b: usize, count: usize) -> usize {
 /// the welcome screen.
 fn preparing_in_the_menus(state: Option<Res<State<GameState>>>) -> bool {
     match state.as_deref().map(State::get) {
-        Some(GameState::Race) | None => false,
+        Some(GameState::Race) | Some(GameState::Editor) | None => false,
         Some(GameState::Tracks) => true,
         Some(_) => !WEB,
     }
@@ -663,11 +672,13 @@ fn spawn_prepared_circuit(
     mut finishing: ResMut<Finishing>,
     mut previewing: ResMut<Previewing>,
     roots: Query<&WorldRoot>,
+    superseded: Query<(Entity, &WorldRoot), With<Superseded>>,
     mut builder: Builder,
     mut roadsides: ResMut<Roadsides>,
     mut track: ResMut<Track>,
     mut loading: ResMut<CircuitLoading>,
 ) {
+    let replacing = |index: usize| superseded.iter().any(|(_, root)| root.0 == index);
     let chosen_first = |indices: Vec<usize>| {
         let mut indices = indices;
         indices.sort_by_key(|&index| index != current.0);
@@ -713,7 +724,8 @@ fn spawn_prepared_circuit(
     if let Some((index, prepared)) = ready {
         preparing.0.remove(&index);
         let chosen = index == current.0;
-        let visibility = if chosen {
+        // Out of sight until whole where it replaces a world still in sight.
+        let visibility = if chosen && !replacing(index) {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -738,7 +750,21 @@ fn spawn_prepared_circuit(
     if let Some((index, rest)) = ready
         && let Some((shown, _)) = finishing.0.remove(&index)
     {
+        let root = shown.root;
         finish(&mut commands, shown, rest, &mut builder);
+        // Whole: in sight in place of the world it replaces.
+        if replacing(index) {
+            for (entity, old) in &superseded {
+                if old.0 == index {
+                    commands.entity(entity).despawn();
+                }
+            }
+            if index == current.0
+                && let Ok(mut new) = commands.get_entity(root)
+            {
+                new.insert(Visibility::Inherited);
+            }
+        }
     }
 }
 
@@ -855,17 +881,24 @@ fn forget_reloaded_circuits(
     mut commands: Commands,
     mut reloaded: MessageReader<CircuitsReloaded>,
     mut current: ResMut<CurrentCircuit>,
-    roots: Query<(Entity, &WorldRoot)>,
+    state: Option<Res<State<GameState>>>,
+    roots: Query<(Entity, &WorldRoot), Without<Superseded>>,
     mut roadsides: ResMut<Roadsides>,
     mut preparing: ResMut<Preparing>,
     mut finishing: ResMut<Finishing>,
     mut previewing: ResMut<Previewing>,
     mut previews: ResMut<PreviewRoots>,
 ) {
+    let editing = state.is_some_and(|state| *state.get() == GameState::Editor);
     for CircuitsReloaded(changed) in reloaded.read() {
         for (entity, root) in &roots {
             if changed.contains(&root.0) {
-                commands.entity(entity).despawn();
+                // In the editor, the one edited kept in sight meanwhile.
+                if editing && root.0 == current.0 {
+                    commands.entity(entity).insert(Superseded);
+                } else {
+                    commands.entity(entity).despawn();
+                }
             }
         }
         for index in changed {
@@ -897,7 +930,8 @@ fn rebuild_world(
     circuits: Res<Circuits>,
     state: Option<Res<State<GameState>>>,
     settings: Option<Res<Settings>>,
-    mut roots: Query<(Entity, &WorldRoot, &mut Visibility)>,
+    mut roots: Query<(Entity, &WorldRoot, &mut Visibility), Without<Superseded>>,
+    superseded: Query<&WorldRoot, With<Superseded>>,
     mut looks: Query<(&PreviewRoot, &mut Visibility), Without<WorldRoot>>,
     mut track: ResMut<Track>,
     mut builder: Builder,
@@ -920,8 +954,10 @@ fn rebuild_world(
         }
     }
     // Its look at the start, till it comes (not seen from above, where a
-    // look kept from before the option changed would show its edges).
-    let looks_wanted = previews_wanted(settings.as_deref());
+    // look kept from before the option changed would show its edges; nor
+    // while the world it replaces is still in sight).
+    let replacing = superseded.iter().any(|root| root.0 == current.0);
+    let looks_wanted = previews_wanted(settings.as_deref()) && !replacing;
     for (look, mut visibility) in &mut looks {
         *visibility = if look.0 == current.0 && !found && looks_wanted {
             Visibility::Inherited
@@ -930,7 +966,10 @@ fn rebuild_world(
         };
     }
     *track = Track::new(&circuits.get(*current).layout);
-    let in_menu = state.is_some_and(|state| *state.get() == GameState::Tracks);
+    // In the tracks menu, and in the map editor (which keeps the world it
+    // replaces in sight meanwhile), it is not waited for.
+    let in_menu =
+        state.is_some_and(|state| matches!(state.get(), GameState::Tracks | GameState::Editor));
     if in_menu && !WEB {
         if !found {
             // A look at its start first, if there is none, then the whole
@@ -1029,7 +1068,14 @@ struct Builder<'w> {
     images: ResMut<'w, Assets<Image>>,
     previews: ResMut<'w, PreviewRoots>,
     relief: ResMut<'w, relief::SharedRelief>,
+    built_terrains: ResMut<'w, BuiltTerrains>,
 }
+
+/// The terrain of each circuit put in the world whole, by its index in
+/// [`Circuits`], in a development build: for the map editor to see how high
+/// the ground is where it shapes it (see [`crate::editor`]).
+#[derive(Resource, Default)]
+pub struct BuiltTerrains(pub HashMap<usize, Arc<terrain::Terrain>>);
 
 /// A circuit whose first part is in the world: where it is, the sea's
 /// mirroring material (to be given what stands round it with the rest),
@@ -1099,6 +1145,12 @@ fn build(
     };
     let (track, terrain) = (&*basis.track, &*basis.terrain);
     let split = realm::splits(scenery);
+    if stretch.is_none() && crate::editor::available() {
+        builder
+            .built_terrains
+            .0
+            .insert(basis.index, Arc::clone(&basis.terrain));
+    }
     let mut root = commands.spawn((lamps::Lamps(lamps), Transform::default(), visibility));
     match stretch {
         None => {

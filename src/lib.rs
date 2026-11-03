@@ -21,6 +21,7 @@ pub mod content;
 pub mod crash;
 pub mod curves_hud;
 pub mod debug_start;
+pub mod editor;
 pub mod game_info;
 pub mod gamepads;
 pub mod geometry;
@@ -180,6 +181,7 @@ pub fn app() -> App {
             perf_log::PerfLogPlugin,
             render_scale::RenderScalePlugin,
             curves_hud::CurvesHudPlugin,
+            editor::EditorPlugin,
         ));
     #[cfg(target_arch = "wasm32")]
     app.add_plugins(web::WebPlugin);

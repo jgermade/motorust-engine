@@ -26,7 +26,8 @@ use crate::race::{LAPS, Mode, Rules};
 use crate::settings::Settings;
 use crate::track::Track;
 use crate::ui::{
-    InputDevice, MenuInput, MenuSound, UiIcons, current_active_device, spawn_title, text_font,
+    ActiveDevice, InputDevice, MenuInput, MenuSound, UiIcons, current_active_device, spawn_title,
+    text_font,
 };
 use crate::world::CircuitLoading;
 
@@ -321,6 +322,7 @@ pub fn laps_after(laps: u32, step: i32) -> u32 {
 #[allow(clippy::too_many_arguments)]
 fn choose_track(
     mut input: MenuInput,
+    keys: Res<ButtonInput<KeyCode>>,
     mut choice: ResMut<CurrentCircuit>,
     circuits: Res<Circuits>,
     mut rules: ResMut<Rules>,
@@ -346,6 +348,13 @@ fn choose_track(
             rules.laps = laps;
             sounds.write(MenuSound::Move);
         }
+    }
+    // In a development build, the map editor on the track chosen.
+    if crate::editor::available() && keys.just_pressed(KeyCode::KeyE) {
+        sounds.write(MenuSound::Confirm);
+        *waiting = false;
+        next.set(GameState::Editor);
+        return;
     }
     if request.confirm || request.start {
         sounds.write(MenuSound::Confirm);
@@ -465,6 +474,12 @@ fn show_legend(
         (Keys::Back, lang.back()),
     ];
     let mut prompts = menu_prompts(active_dev, &hints);
+    if crate::editor::available() && active_dev == ActiveDevice::Keyboard {
+        prompts.push(KeyPrompt {
+            badges: vec![crate::legend::key_badge(KeyCode::KeyE, lang)],
+            action: "Editor".into(),
+        });
+    }
     prompts.push(music_toggle_prompt(
         active_dev,
         lang,
