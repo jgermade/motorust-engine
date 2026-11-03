@@ -125,6 +125,16 @@ pub fn files() -> Result<Vec<(String, &'static str)>, String> {
         .collect()
 }
 
+/// A circuit as the map editor has it, not yet saved (see
+/// [`Circuits::parse_shaped`]): which, its file's text if it is edited, and
+/// its ground's shaping if it is.
+#[derive(Clone, Copy)]
+pub struct Edited {
+    pub index: usize,
+    pub text: Option<&'static str>,
+    pub sculpt: Option<&'static crate::world::sculpt::Sculpt>,
+}
+
 /// The ground's shaping of the circuit whose file is `path`, from its
 /// companion (see [`crate::world::sculpt::companion`]), if a pack has one;
 /// what is wrong with it, if it is wrong.
@@ -194,21 +204,23 @@ impl Circuits {
         Self::parse_shaped(files, None)
     }
 
-    /// The same, the ground of circuit `index` shaped as `sculpt` says
-    /// instead of as its companion does (the map editor's, not yet saved:
-    /// see [`crate::editor`]).
+    /// The same, circuit `edited.index` as the map editor has it, not yet
+    /// saved (see [`crate::editor`]): its file's text, and its ground's
+    /// shaping instead of its companion's, where it says.
     pub fn parse_shaped(
         files: &[(String, &'static str)],
-        shaped: Option<(usize, &'static crate::world::sculpt::Sculpt)>,
+        edited: Option<Edited>,
     ) -> Result<Self, String> {
         let circuits = files
             .iter()
             .enumerate()
             .map(|(index, (path, text))| {
+                let edited = edited.filter(|edited| edited.index == index);
+                let text = edited.and_then(|edited| edited.text).unwrap_or(text);
                 let mut circuit: Circuit = data::parse(path, text)?;
-                circuit.scenery.sculpt = match shaped {
-                    Some((shaped, sculpt)) if shaped == index => Some(sculpt),
-                    _ => sculpt_of(path)?,
+                circuit.scenery.sculpt = match edited.and_then(|edited| edited.sculpt) {
+                    Some(sculpt) => Some(sculpt),
+                    None => sculpt_of(path)?,
                 };
                 Ok(circuit)
             })

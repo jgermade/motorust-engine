@@ -46,6 +46,7 @@
 pub mod file;
 pub mod limits;
 pub mod profile;
+pub mod roadside;
 pub mod terrain;
 pub mod view;
 
@@ -398,12 +399,36 @@ enum Drag {
 /// all: not at every move of a drag.
 const SETTLE: f32 = 0.25;
 
+/// What the editor edits: the lap (its points, its profile, its
+/// banking), the terrain ([`terrain`]), or what stands by the road
+/// ([`roadside`]). M goes from one to the next.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mode {
+    #[default]
+    Lap,
+    Terrain,
+    Roadside,
+}
+
+impl Mode {
+    fn next(self) -> Self {
+        match self {
+            Mode::Lap => Mode::Terrain,
+            Mode::Terrain => Mode::Roadside,
+            Mode::Roadside => Mode::Lap,
+        }
+    }
+}
+
 /// The editor at work: the circuit it edits, what it edits, the lap
 /// through it, and what it has to say.
 #[derive(Resource, Default)]
 pub struct Editor {
     pub circuit: usize,
+    pub mode: Mode,
     pub edit: Edit,
+    /// What stands by the road, as placed.
+    pub roadside: roadside::Roadside,
     /// The lap through the points and the profile as they are now; with
     /// its banking (`bank`, `bumps`) once it has settled.
     pub preview: Preview,
@@ -460,6 +485,12 @@ impl Editor {
     fn open(&mut self, index: usize, circuits: &Circuits, view: &mut View, now: f32) {
         self.circuit = index;
         self.edit = Edit::of(&circuits.at(index).layout);
+        let text = crate::circuits::files()
+            .ok()
+            .and_then(|files| files.into_iter().nth(index))
+            .map(|(_, text)| text)
+            .unwrap_or_default();
+        self.roadside = roadside::Roadside::read(circuits.at(index), text);
         self.drag = Drag::None;
         self.held = None;
         self.leaving = false;
@@ -514,10 +545,12 @@ impl Plugin for EditorPlugin {
                 Update,
                 (
                     follow_reloads,
+                    switch_mode,
                     terrain::shaping_keys,
                     steer_view,
                     pick_and_drag,
                     terrain::brush_the_ground,
+                    roadside::roadside_input,
                     terrain::rebuild_live,
                     edit_keys,
                     lay_out_whole,
@@ -525,6 +558,7 @@ impl Plugin for EditorPlugin {
                     draw,
                     draw_panel,
                     terrain::draw_brush,
+                    roadside::draw_roadside,
                     show_text,
                 )
                     .chain()
@@ -534,6 +568,13 @@ impl Plugin for EditorPlugin {
             app.insert_resource(Asked(asked))
                 .add_systems(Startup, start);
         }
+    }
+}
+
+/// M: the lap, the terrain, what stands by the road, and the lap again.
+fn switch_mode(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>) {
+    if keys.just_pressed(KeyCode::KeyM) {
+        editor.mode = editor.mode.next();
     }
 }
 
@@ -667,8 +708,13 @@ fn follow_reloads(
     circuits: Res<Circuits>,
     mut editor: ResMut<Editor>,
     mut view: ResMut<View>,
+    shaping: Res<Shaping>,
 ) {
     for reloaded in reloads.read() {
+        // Built anew with the ground as shaped, not read from the disk.
+        if terrain::building_live(&shaping) {
+            continue;
+        }
         if reloaded.0.contains(&editor.circuit) && editor.circuit < circuits.len() {
             info!(
                 "editor: circuit read again, changed: {}",
@@ -768,7 +814,7 @@ fn pick_and_drag(
     mut editor: ResMut<Editor>,
     shaping: Res<Shaping>,
 ) {
-    if shaping.on {
+    if shaping.on || editor.mode != Mode::Lap {
         editor.hover = None;
         editor.drag = Drag::None;
         return;
@@ -898,30 +944,32 @@ fn edit_keys(
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let before = editor.edit.clone();
     let lap = editor.lap();
-    if keys.just_pressed(KeyCode::Tab) {
+    let on_lap = editor.mode == Mode::Lap;
+    if keys.just_pressed(KeyCode::Tab) && on_lap {
         editor.edit.select_next(if shift { -1 } else { 1 });
     }
-    if keys.any_just_pressed([KeyCode::Insert, KeyCode::KeyN]) && !ctrl {
+    if keys.any_just_pressed([KeyCode::Insert, KeyCode::KeyN]) && !ctrl && on_lap {
         editor.edit.insert_after_selected(lap);
     }
     if keys.just_pressed(KeyCode::KeyB)
+        && on_lap
         && let Some(along) = editor.hover
     {
         editor.edit.add_span_at(along, lap);
     }
-    if keys.any_just_pressed([KeyCode::Delete, KeyCode::Backspace]) {
+    if keys.any_just_pressed([KeyCode::Delete, KeyCode::Backspace]) && on_lap {
         editor.edit.remove_selected();
     }
-    if keys.just_pressed(KeyCode::BracketLeft) && !shaping.on {
+    if keys.just_pressed(KeyCode::BracketLeft) && on_lap {
         editor.edit.change_factor(-1.0);
     }
-    if keys.just_pressed(KeyCode::BracketRight) && !shaping.on {
+    if keys.just_pressed(KeyCode::BracketRight) && on_lap {
         editor.edit.change_factor(1.0);
     }
-    if keys.just_pressed(KeyCode::KeyT) {
+    if keys.just_pressed(KeyCode::KeyT) && on_lap {
         editor.edit.toggle_raised();
     }
-    if keys.just_pressed(KeyCode::KeyG) {
+    if keys.just_pressed(KeyCode::KeyG) && on_lap {
         editor.edit.change_grip(if shift { -1.0 } else { 1.0 });
     }
     // In the terrain mode, its strokes; else the lap's changes.
@@ -935,7 +983,7 @@ fn edit_keys(
         if redo {
             shaping.redo();
         }
-    } else {
+    } else if on_lap {
         if undo {
             editor.edit.undo();
         }
@@ -952,13 +1000,14 @@ fn edit_keys(
             Ok(path) => {
                 info!("editor: saved into {path}");
                 editor.edit.changed = false;
+                editor.roadside.changed = false;
                 shaping.changed = false;
                 format!("Saved into {path}")
             }
             Err(error) => format!("Not saved: {error}"),
         };
     }
-    let unsaved = editor.edit.changed || shaping.changed;
+    let unsaved = editor.edit.changed || shaping.changed || editor.roadside.changed;
     let step =
         keys.just_pressed(KeyCode::PageDown) as isize - keys.just_pressed(KeyCode::PageUp) as isize;
     if step != 0 {
@@ -1041,10 +1090,11 @@ fn save(editor: &Editor, circuits: &Circuits, shaping: &Shaping) -> Result<Strin
             crate::content::write_bytes(&companion, &sculpt.encode())?;
             saved.push(companion);
         }
-        if editor.edit.changed || saved.is_empty() {
+        if editor.edit.changed || editor.roadside.changed || saved.is_empty() {
             let text = std::str::from_utf8(crate::content::reread(&path)?)
                 .map_err(|error| error.to_string())?;
             let written = write_lap(text, &editor.edit, layout)?;
+            let written = editor.roadside.write(&written)?;
             crate::content::write(&path, &written)?;
             saved.insert(0, path);
         }
@@ -1206,15 +1256,16 @@ fn draw_panel(
     let Ok(window) = window.single() else {
         return;
     };
-    // Not while shaping the ground.
+    // Only on the lap.
+    let shown = editor.mode == Mode::Lap && !shaping.on;
     for (_, mut visibility) in &mut background {
-        *visibility = if shaping.on {
-            Visibility::Hidden
-        } else {
+        *visibility = if shown {
             Visibility::Inherited
+        } else {
+            Visibility::Hidden
         };
     }
-    if shaping.on {
+    if !shown {
         return;
     }
     let size = window.size();
@@ -1441,7 +1492,7 @@ fn show_text(
          Ctrl+Z/Y undo/redo, Ctrl+S save, PgUp/PgDn circuit, Home all, Esc back\n\
          {}",
         circuit.name,
-        if editor.edit.changed || shaping.changed {
+        if editor.edit.changed || shaping.changed || editor.roadside.changed {
             " (unsaved)"
         } else {
             ""
@@ -1454,7 +1505,10 @@ fn show_text(
         limits::min_radius(editor.wall),
         preview.steepest * 100.0,
         limits::MAX_GRADE * 100.0,
-        terrain::shaping_text(&shaping),
+        match editor.mode {
+            Mode::Roadside => roadside::roadside_text(&editor.roadside),
+            _ => terrain::shaping_text(&shaping),
+        },
         picked_text(&editor.edit, editor.lap()),
         editor.message,
     );

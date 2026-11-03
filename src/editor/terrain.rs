@@ -64,7 +64,7 @@ pub struct Shaping {
     /// The shaping a new world is being built with, and the terrain it
     /// replaces (to tell when it has come).
     /// (Told by its address alone: it is never read through.)
-    pending: Option<(&'static Sculpt, usize)>,
+    pending: Option<(Option<&'static Sculpt>, usize)>,
 }
 
 /// How long after a stroke the circuit is built anew with it (s).
@@ -85,6 +85,12 @@ impl Shaping {
             sculpt: built.cloned(),
             ..default()
         };
+    }
+
+    /// The circuit to be built anew with what is edited a moment from
+    /// `now` (s, real time).
+    pub fn request_rebuild(&mut self, now: f32) {
+        self.settle = Some(now + SETTLE);
     }
 
     fn remember(&mut self) {
@@ -183,9 +189,7 @@ pub fn shaping_keys(
         shaping.open(built);
         *opened = Some(editor.circuit);
     }
-    if keys.just_pressed(KeyCode::KeyM) {
-        shaping.on = !shaping.on;
-    }
+    shaping.on = editor.mode == super::Mode::Terrain;
     if !shaping.on {
         return;
     }
@@ -430,11 +434,11 @@ pub fn rebuild_live(
         && terrain.is_some_and(|terrain| terrain != before)
     {
         shaping.pending = None;
-        shaping.built = Some(built);
+        shaping.built = built;
         shaping.built_heights.clear();
         shaping.reach.clear();
         // Shaped further meanwhile: again.
-        if shaping.sculpt.as_ref() != Some(built) {
+        if shaping.sculpt.as_ref() != built {
             shaping.settle = Some(time.elapsed_secs());
         }
     }
@@ -445,13 +449,36 @@ pub fn rebuild_live(
         return;
     }
     shaping.settle = None;
-    let (Some(sculpt), Some(terrain)) = (shaping.sculpt.clone(), terrain) else {
+    let Some(terrain) = terrain else {
         return;
     };
-    let sculpt: &'static Sculpt = Box::leak(Box::new(sculpt));
-    match crate::circuits::files()
-        .and_then(|files| Circuits::parse_shaped(&files, Some((editor.circuit, sculpt))))
-    {
+    // The ground as shaped, and what stands by the road as placed (into
+    // the circuit's file's text as read, in memory).
+    let sculpt: Option<&'static Sculpt> = shaping
+        .sculpt
+        .clone()
+        .map(|sculpt| &*Box::leak(Box::new(sculpt)));
+    let built = (|| -> Result<Circuits, String> {
+        let files = crate::circuits::files()?;
+        let text = match editor.roadside.changed {
+            true => {
+                let (_, read) = files
+                    .get(editor.circuit)
+                    .ok_or("the circuit is no longer in the list")?;
+                Some(&*String::leak(editor.roadside.write(read)?))
+            }
+            false => None,
+        };
+        Circuits::parse_shaped(
+            &files,
+            Some(crate::circuits::Edited {
+                index: editor.circuit,
+                text,
+                sculpt,
+            }),
+        )
+    })();
+    match built {
         Ok(new) => {
             *circuits = new;
             reloaded.write(CircuitsReloaded(vec![editor.circuit]));
@@ -459,6 +486,12 @@ pub fn rebuild_live(
         }
         Err(error) => warn!("editor: the circuit was not built anew: {error}"),
     }
+}
+
+/// Whether the circuit is being built anew with what was shaped, not read
+/// again from the disk.
+pub fn building_live(shaping: &Shaping) -> bool {
+    shaping.pending.is_some()
 }
 
 /// Whether the circuit is being built anew with what was shaped.

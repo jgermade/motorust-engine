@@ -311,6 +311,81 @@ pub fn write_list(
     Ok(out)
 }
 
+/// The texts of the items of the list `key` in `text`, a circuit's file, in
+/// its order (each as written, its comments inside it too), or what is
+/// wrong.
+pub fn list_items(text: &str, key: &str) -> Result<Vec<String>, String> {
+    let comment = in_comment(text);
+    let (open, close) = list(text, key, &comment)?;
+    Ok(tuples(text, open, close, &comment)
+        .into_iter()
+        .map(|(start, end)| text[start..end].to_string())
+        .collect())
+}
+
+/// Whether `text`, a circuit's file, has a list `key`.
+pub fn has_list(text: &str, key: &str) -> bool {
+    list(text, key, &in_comment(text)).is_ok()
+}
+
+/// `item`, the text of an item of a list (`(along: 240.0, side: Right,
+/// ...)`), with its field `field` set to `value` (as written), the rest of
+/// it as it was; with the field added at its end if it had none.
+pub fn set_field(item: &str, field: &str, value: &str) -> String {
+    let comment = in_comment(item);
+    let bytes = item.as_bytes();
+    let pattern = format!("{field}:");
+    let mut depth = 0i32;
+    let mut at = 0;
+    while at < bytes.len() {
+        if comment[at] {
+            at += 1;
+            continue;
+        }
+        match bytes[at] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            _ => {}
+        }
+        let starts_word =
+            at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
+        if depth == 1 && starts_word && item[at..].starts_with(&pattern) {
+            // Its value: up to the comma or the closing bracket at this
+            // depth.
+            let from = at + pattern.len();
+            let mut to = from;
+            let mut inner = 0i32;
+            while to < bytes.len() {
+                if !comment[to] {
+                    match bytes[to] {
+                        b'(' | b'[' => inner += 1,
+                        b')' | b']' if inner == 0 => break,
+                        b')' | b']' => inner -= 1,
+                        b',' if inner == 0 => break,
+                        _ => {}
+                    }
+                }
+                to += 1;
+            }
+            return format!("{}{} {value}{}", &item[..at], pattern, &item[to..]);
+        }
+        at += 1;
+    }
+    // Not there: added before the closing bracket.
+    match item.rfind(')') {
+        Some(close) => {
+            let body = item[..close].trim_end();
+            let comma = if body.ends_with(',') || body.ends_with('(') {
+                ""
+            } else {
+                ","
+            };
+            format!("{body}{comma} {field}: {value}{}", &item[close..])
+        }
+        None => item.to_string(),
+    }
+}
+
 /// The spaces and tabs a line starts with, the line starting at `line`.
 fn leading(text: &str, line: usize) -> String {
     let rest = &text[line..];
@@ -457,6 +532,38 @@ pub mod tests {
             was,
             changed,
         }
+    }
+
+    #[test]
+    fn a_field_of_an_item_is_set_the_rest_as_it_was() {
+        let item = "(\n    along: 240.0,\n    side: Right,\n    text: \"MOTORUST\",\n    // From the fifth letter on.\n    accent: Some((4, (0.9, 0.4, 0.12))),\n)";
+        let moved = set_field(&set_field(item, "along", "300.5"), "side", "Left");
+        assert_eq!(
+            moved,
+            item.replace("240.0", "300.5").replace("Right", "Left")
+        );
+        assert_eq!(
+            set_field(
+                "(along: 1.0, color: (0.1, 0.2, 0.3), text: Some(\"A\"))",
+                "text",
+                "None"
+            ),
+            "(along: 1.0, color: (0.1, 0.2, 0.3), text: None)"
+        );
+        // A field inside another is not the item's own.
+        assert_eq!(
+            set_field("(span: Span(1.0, 2.0), side: Left)", "side", "Right"),
+            "(span: Span(1.0, 2.0), side: Right)"
+        );
+        assert_eq!(
+            set_field("(along: 1.0)", "side", "Left"),
+            "(along: 1.0, side: Left)"
+        );
+        assert_eq!(
+            list_items(FILE, "control_points").unwrap()[1],
+            "(10.0, -20.0)"
+        );
+        assert!(has_list(FILE, "elevation") && !has_list(FILE, "gantries"));
     }
 
     #[test]
