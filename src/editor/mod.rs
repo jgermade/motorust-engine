@@ -48,6 +48,7 @@ pub mod limits;
 pub mod profile;
 pub mod roadside;
 pub mod terrain;
+pub mod ui;
 pub mod view;
 
 use bevy::camera::visibility::RenderLayers;
@@ -498,6 +499,21 @@ impl Editor {
         *view = View::over(&self.edit.positions(), BASE_ELEVATION);
     }
 
+    /// Whether anything edited is not saved.
+    pub fn unsaved(&self, shaping: &Shaping) -> bool {
+        self.edit.changed || shaping.changed || self.roadside.changed
+    }
+
+    /// How far along the lap (m) its point nearest `point` is.
+    fn along_nearest(&self, point: Vec2) -> f32 {
+        self.preview
+            .line
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1.distance(point).total_cmp(&b.1.distance(point)))
+            .map_or(0.0, |(index, _)| self.preview.along(index))
+    }
+
     /// The lap's length (m), as it is laid out now.
     fn lap(&self) -> f32 {
         self.preview.length()
@@ -529,13 +545,14 @@ impl Plugin for EditorPlugin {
         }
         app.init_resource::<Editor>()
             .init_resource::<Shaping>()
+            .init_resource::<ui::Actions>()
             .insert_resource(View::over(&[], 0.0))
             .init_gizmo_group::<PanelGizmos>()
             .add_systems(
                 OnEnter(GameState::Editor),
                 (
                     enter,
-                    spawn_text,
+                    ui::spawn_ui,
                     spawn_panel_camera,
                     spawn_panel_background,
                 ),
@@ -544,22 +561,36 @@ impl Plugin for EditorPlugin {
             .add_systems(
                 Update,
                 (
-                    follow_reloads,
-                    switch_mode,
-                    terrain::shaping_keys,
-                    steer_view,
-                    pick_and_drag,
-                    terrain::brush_the_ground,
-                    roadside::roadside_input,
-                    terrain::rebuild_live,
-                    edit_keys,
-                    lay_out_whole,
-                    place_camera,
-                    draw,
-                    draw_panel,
-                    terrain::draw_brush,
-                    roadside::draw_roadside,
-                    show_text,
+                    (
+                        ui::press_buttons,
+                        ui::read_keys,
+                        ui::toggle_help,
+                        follow_reloads,
+                        switch_mode,
+                    )
+                        .chain(),
+                    (
+                        terrain::shaping_keys,
+                        steer_view,
+                        pick_and_drag,
+                        terrain::brush_the_ground,
+                        roadside::roadside_input,
+                        terrain::rebuild_live,
+                        act,
+                        lay_out_whole,
+                        place_camera,
+                    )
+                        .chain(),
+                    (
+                        draw,
+                        draw_panel,
+                        terrain::draw_brush,
+                        roadside::draw_roadside,
+                        ui::style_ui,
+                        ui::show_texts,
+                        ui::clear_actions,
+                    )
+                        .chain(),
                 )
                     .chain()
                     .run_if(in_state(GameState::Editor)),
@@ -572,9 +603,13 @@ impl Plugin for EditorPlugin {
 }
 
 /// M: the lap, the terrain, what stands by the road, and the lap again.
-fn switch_mode(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>) {
-    if keys.just_pressed(KeyCode::KeyM) {
-        editor.mode = editor.mode.next();
+fn switch_mode(actions: Res<ui::Actions>, mut editor: ResMut<Editor>) {
+    for action in &actions.asked {
+        match action {
+            ui::Action::CycleMode => editor.mode = editor.mode.next(),
+            ui::Action::SetMode(mode) => editor.mode = *mode,
+            _ => {}
+        }
     }
 }
 
@@ -744,7 +779,11 @@ fn steer_view(
     mut view: ResMut<View>,
     mut editor: ResMut<Editor>,
     shaping: Res<Shaping>,
+    actions: Res<ui::Actions>,
 ) {
+    if actions.help {
+        return;
+    }
     if editor.entered_with_e && !keys.pressed(KeyCode::KeyE) {
         editor.entered_with_e = false;
     }
@@ -760,7 +799,7 @@ fn steer_view(
         pan = Vec2::ZERO;
     }
     let mut next = view.panned(pan * view.distance * 0.8 * dt);
-    if buttons.pressed(MouseButton::Right) {
+    if buttons.pressed(MouseButton::Right) && !actions.over_ui {
         // The ground follows the cursor, about.
         next = next.panned(Vec2::new(-motion.delta.x, motion.delta.y) * next.distance * 0.0015);
     }
@@ -770,7 +809,7 @@ fn steer_view(
     };
     // Shaping the ground, Shift and Ctrl with the wheel size the brush.
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let lines = if shaping.on && (ctrl || shift) {
+    let lines = if (shaping.on && (ctrl || shift)) || actions.over_ui {
         0.0
     } else {
         lines
@@ -813,8 +852,9 @@ fn pick_and_drag(
     circuits: Res<Circuits>,
     mut editor: ResMut<Editor>,
     shaping: Res<Shaping>,
+    actions: Res<ui::Actions>,
 ) {
-    if shaping.on || editor.mode != Mode::Lap {
+    if shaping.on || editor.mode != Mode::Lap || actions.help {
         editor.hover = None;
         editor.drag = Drag::None;
         return;
@@ -834,7 +874,7 @@ fn pick_and_drag(
         editor.drag = Drag::None;
         editor.held = None;
     }
-    if buttons.just_pressed(MouseButton::Left) {
+    if buttons.just_pressed(MouseButton::Left) && !actions.over_ui {
         let lap = editor.lap();
         let picked = if panel.on_band(cursor) {
             // A stretch's end near the cursor, or the stretch under it.
@@ -926,12 +966,13 @@ fn pick_and_drag(
     }
 }
 
-/// The keys that change what is edited, save it, leave or go to another
-/// circuit.
+/// The actions (see [`ui::Action`]) that change what is edited, save it,
+/// leave or go to another circuit, from the keys or the buttons: undoing
+/// and redoing what the mode in use edits, and the lap's own.
 #[allow(clippy::too_many_arguments)]
-fn edit_keys(
+fn act(
     time: Res<Time<Real>>,
-    keys: Res<ButtonInput<KeyCode>>,
+    actions: Res<ui::Actions>,
     circuits: Res<Circuits>,
     mut current: ResMut<CurrentCircuit>,
     mut editor: ResMut<Editor>,
@@ -939,94 +980,86 @@ fn edit_keys(
     mut next: ResMut<NextState<GameState>>,
     mut shaping: ResMut<Shaping>,
 ) {
+    use ui::Action;
     let now = time.elapsed_secs();
-    let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let before = editor.edit.clone();
     let lap = editor.lap();
-    let on_lap = editor.mode == Mode::Lap;
-    if keys.just_pressed(KeyCode::Tab) && on_lap {
-        editor.edit.select_next(if shift { -1 } else { 1 });
-    }
-    if keys.any_just_pressed([KeyCode::Insert, KeyCode::KeyN]) && !ctrl && on_lap {
-        editor.edit.insert_after_selected(lap);
-    }
-    if keys.just_pressed(KeyCode::KeyB)
-        && on_lap
-        && let Some(along) = editor.hover
-    {
-        editor.edit.add_span_at(along, lap);
-    }
-    if keys.any_just_pressed([KeyCode::Delete, KeyCode::Backspace]) && on_lap {
-        editor.edit.remove_selected();
-    }
-    if keys.just_pressed(KeyCode::BracketLeft) && on_lap {
-        editor.edit.change_factor(-1.0);
-    }
-    if keys.just_pressed(KeyCode::BracketRight) && on_lap {
-        editor.edit.change_factor(1.0);
-    }
-    if keys.just_pressed(KeyCode::KeyT) && on_lap {
-        editor.edit.toggle_raised();
-    }
-    if keys.just_pressed(KeyCode::KeyG) && on_lap {
-        editor.edit.change_grip(if shift { -1.0 } else { 1.0 });
-    }
-    // In the terrain mode, its strokes; else the lap's changes.
-    let undo = ctrl && keys.just_pressed(KeyCode::KeyZ) && !shift;
-    let redo =
-        ctrl && (keys.just_pressed(KeyCode::KeyY) || (keys.just_pressed(KeyCode::KeyZ) && shift));
-    if shaping.on {
-        if undo {
-            shaping.undo();
-        }
-        if redo {
-            shaping.redo();
-        }
-    } else if on_lap {
-        if undo {
-            editor.edit.undo();
-        }
-        if redo {
-            editor.edit.redo();
-        }
-    }
-    if keys.just_pressed(KeyCode::Home) {
-        let positions = editor.edit.positions();
-        *view = View::over(&positions, view.height);
-    }
-    if ctrl && keys.just_pressed(KeyCode::KeyS) {
-        editor.message = match save(&editor, &circuits, &shaping) {
-            Ok(path) => {
-                info!("editor: saved into {path}");
-                editor.edit.changed = false;
-                editor.roadside.changed = false;
-                shaping.changed = false;
-                format!("Saved into {path}")
+    let mode = editor.mode;
+    for &action in &actions.asked {
+        match (action, mode) {
+            (Action::Next, Mode::Lap) => editor.edit.select_next(1),
+            (Action::Prev, Mode::Lap) => editor.edit.select_next(-1),
+            (Action::AddAfter, Mode::Lap) => editor.edit.insert_after_selected(lap),
+            (Action::AddBanking, Mode::Lap) => {
+                // At the panel's cursor; from the button, at the stretch of
+                // the lap nearest the middle of the view.
+                let along = editor.hover.unwrap_or_else(|| editor.along_nearest(view.focus));
+                editor.edit.add_span_at(along, lap);
             }
-            Err(error) => format!("Not saved: {error}"),
-        };
-    }
-    let unsaved = editor.edit.changed || shaping.changed || editor.roadside.changed;
-    let step =
-        keys.just_pressed(KeyCode::PageDown) as isize - keys.just_pressed(KeyCode::PageUp) as isize;
-    if step != 0 {
-        if unsaved {
-            editor.message = "Unsaved changes: save them first (Ctrl+S), or undo them".into();
-        } else {
-            let index =
-                (editor.circuit as isize + step).rem_euclid(circuits.len() as isize) as usize;
-            current.0 = index;
-            editor.open(index, &circuits, &mut view, now);
-            editor.message.clear();
-        }
-    }
-    if keys.just_pressed(KeyCode::Escape) {
-        if unsaved && !editor.leaving {
-            editor.leaving = true;
-            editor.message = "Unsaved changes: Esc again to leave them, Ctrl+S to save them".into();
-        } else {
-            next.set(GameState::Tracks);
+            (Action::Remove, Mode::Lap) => editor.edit.remove_selected(),
+            (Action::FactorDown, Mode::Lap) => editor.edit.change_factor(-1.0),
+            (Action::FactorUp, Mode::Lap) => editor.edit.change_factor(1.0),
+            (Action::ToggleRaised, Mode::Lap) => editor.edit.toggle_raised(),
+            (Action::GripUp, Mode::Lap) => editor.edit.change_grip(1.0),
+            (Action::GripDown, Mode::Lap) => editor.edit.change_grip(-1.0),
+            (Action::Undo, Mode::Lap) => editor.edit.undo(),
+            (Action::Redo, Mode::Lap) => editor.edit.redo(),
+            (Action::Undo, Mode::Terrain) => {
+                if shaping.undo() {
+                    shaping.request_rebuild(now);
+                }
+            }
+            (Action::Redo, Mode::Terrain) => {
+                if shaping.redo() {
+                    shaping.request_rebuild(now);
+                }
+            }
+            (Action::Undo, Mode::Roadside) => {
+                editor.roadside.undo();
+                shaping.request_rebuild(now);
+            }
+            (Action::Redo, Mode::Roadside) => {
+                editor.roadside.redo();
+                shaping.request_rebuild(now);
+            }
+            (Action::ShowAll, _) => {
+                let positions = editor.edit.positions();
+                *view = View::over(&positions, view.height);
+            }
+            (Action::Save, _) => {
+                editor.message = match save(&editor, &circuits, &shaping) {
+                    Ok(path) => {
+                        info!("editor: saved into {path}");
+                        editor.edit.changed = false;
+                        editor.roadside.changed = false;
+                        shaping.changed = false;
+                        format!("Saved into {path}")
+                    }
+                    Err(error) => format!("Not saved: {error}"),
+                };
+            }
+            (Action::PrevCircuit | Action::NextCircuit, _) => {
+                let step = if action == Action::NextCircuit { 1 } else { -1 };
+                if editor.unsaved(&shaping) {
+                    editor.message = "Unsaved changes: save them first (Ctrl+S), or undo them".into();
+                } else {
+                    let index = (editor.circuit as isize + step)
+                        .rem_euclid(circuits.len() as isize) as usize;
+                    current.0 = index;
+                    editor.open(index, &circuits, &mut view, now);
+                    editor.message.clear();
+                }
+            }
+            (Action::Exit, _) => {
+                if editor.unsaved(&shaping) && !editor.leaving {
+                    editor.leaving = true;
+                    editor.message =
+                        "Unsaved changes: Esc again to leave them, Ctrl+S to save them".into();
+                } else {
+                    next.set(GameState::Tracks);
+                }
+            }
+            _ => {}
         }
     }
     if editor.edit.points != before.points
@@ -1395,31 +1428,6 @@ fn draw_panel(
     }
 }
 
-/// The editor's text, in the top left corner.
-#[derive(Component)]
-struct EditorText;
-
-fn spawn_text(mut commands: Commands, font: Res<UiFont>) {
-    commands.spawn((
-        EditorText,
-        DespawnOnExit(GameState::Editor),
-        Text::new(""),
-        TextFont {
-            font: font.0.clone().into(),
-            font_size: FontSize::Px(16.0),
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        TextShadow::default(),
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(16),
-            top: px(16),
-            ..default()
-        },
-    ));
-}
-
 /// What is picked, said: a point where it is, a mark how far along and how
 /// high, a stretch where it runs and how it banks.
 fn picked_text(edit: &Edit, lap: f32) -> String {
@@ -1453,18 +1461,10 @@ fn picked_text(edit: &Edit, lap: f32) -> String {
     }
 }
 
-/// What the editor shows: the circuit, its lap, the limits it breaks, what
-/// is picked, the keys and what it last said.
-fn show_text(
-    editor: Res<Editor>,
-    shaping: Res<Shaping>,
-    circuits: Res<Circuits>,
-    mut text: Query<&mut Text, With<EditorText>>,
-) {
-    let Ok(mut text) = text.single_mut() else {
-        return;
-    };
-    let circuit = circuits.at(editor.circuit.min(circuits.len() - 1));
+/// The lap's figures, for the top bar: its length, its points, marks and
+/// stretches, its tightest bend and steepest grade against the limits, and
+/// where it breaks them.
+pub(crate) fn figures(editor: &Editor) -> String {
     let preview = &editor.preview;
     let count =
         |marks: &[bool]| marks.iter().filter(|&&marked| marked).count() as f32 * preview.step;
@@ -1478,25 +1478,8 @@ fn show_text(
             count(&preview.bumps)
         )
     };
-    let hover = editor
-        .hover
-        .map_or_else(String::new, |along| format!("; cursor at {along:.0} m"));
-    **text = format!(
-        "EDITOR: {}{}\n\
-         Lap {:.0} m, {} points, {} marks, {} stretches of banking; tightest bend {:.1} m (at least {:.1}), steepest grade {:.1} % (under {:.0})\n\
-         {limits}\n\
-         {}\n\
-         {}{hover}\n\
-         Mouse: left picks and drags (points on the map, marks and banking's ends on the panel), right moves, wheel zooms. \
-         WASD move, Q/E turn, R/F tilt, Tab next, N add, Del remove, B banking at the cursor, [ ] factor, T raised, G/Shift+G grip, \
-         Ctrl+Z/Y undo/redo, Ctrl+S save, PgUp/PgDn circuit, Home all, Esc back\n\
-         {}",
-        circuit.name,
-        if editor.edit.changed || shaping.changed || editor.roadside.changed {
-            " (unsaved)"
-        } else {
-            ""
-        },
+    format!(
+        "Lap {:.0} m · {} points, {} marks, {} stretches of banking · tightest bend {:.1} m (at least {:.1}) · steepest grade {:.1} % (under {:.0}) · {limits}",
         preview.length(),
         editor.edit.points.len(),
         editor.edit.marks.len(),
@@ -1505,17 +1488,15 @@ fn show_text(
         limits::min_radius(editor.wall),
         preview.steepest * 100.0,
         limits::MAX_GRADE * 100.0,
-        match editor.mode {
-            Mode::Roadside => roadside::roadside_text(&editor.roadside),
-            _ => terrain::shaping_text(&shaping),
-        },
-        if editor.mode == Mode::Lap {
-            format!("Picked: {}", picked_text(&editor.edit, editor.lap()))
-        } else {
-            String::new()
-        },
-        editor.message,
-    );
+    )
+}
+
+/// What is picked on the lap, and where the cursor is on the panel.
+pub(crate) fn picked_line(editor: &Editor) -> String {
+    let hover = editor
+        .hover
+        .map_or_else(String::new, |along| format!("\nCursor at {along:.0} m"));
+    format!("Picked: {}{hover}", picked_text(&editor.edit, editor.lap()))
 }
 
 #[cfg(any(test, feature = "testing"))]

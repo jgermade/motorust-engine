@@ -175,6 +175,7 @@ pub fn ray_to_ground(
 /// opens (see [`super::Editor`]), the brush's tool, size and strength.
 pub fn shaping_keys(
     keys: Res<ButtonInput<KeyCode>>,
+    actions: Res<super::ui::Actions>,
     scroll: Res<AccumulatedMouseScroll>,
     circuits: Res<Circuits>,
     editor: Res<Editor>,
@@ -193,22 +194,10 @@ pub fn shaping_keys(
     if !shaping.on {
         return;
     }
-    for (key, tool) in [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-        KeyCode::Digit8,
-        KeyCode::Digit9,
-    ]
-    .into_iter()
-    .zip(Tool::ALL)
-    {
-        if keys.just_pressed(key) {
-            shaping.brush.tool = tool;
+    use super::ui::Action;
+    for action in &actions.asked {
+        if let Action::Tool(tool) = action {
+            shaping.brush.tool = *tool;
         }
     }
     let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
@@ -217,14 +206,13 @@ pub fn shaping_keys(
         MouseScrollUnit::Line => scroll.delta.y,
         MouseScrollUnit::Pixel => scroll.delta.y / 40.0,
     };
-    let mut size = keys.just_pressed(KeyCode::BracketRight) as i32 as f32
-        - keys.just_pressed(KeyCode::BracketLeft) as i32 as f32;
-    let mut strength = keys.just_pressed(KeyCode::Period) as i32 as f32
-        - keys.just_pressed(KeyCode::Comma) as i32 as f32;
-    if shift {
+    let mut size = actions.has(Action::Bigger) as i32 as f32 - actions.has(Action::Smaller) as i32 as f32;
+    let mut strength =
+        actions.has(Action::Stronger) as i32 as f32 - actions.has(Action::Weaker) as i32 as f32;
+    if shift && !actions.over_ui {
         size += lines;
     }
-    if ctrl {
+    if ctrl && !actions.over_ui {
         strength += lines;
     }
     shaping.brush = shaping.brush.resized(size).strengthened(strength);
@@ -255,9 +243,14 @@ pub fn brush_the_ground(
     pieces: Query<&Mesh3d, With<GroundPiece>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut shaping: ResMut<Shaping>,
+    actions: Res<super::ui::Actions>,
 ) {
     shaping.cursor = None;
-    if !shaping.on {
+    if !shaping.on || actions.help || actions.over_ui {
+        if buttons.just_released(MouseButton::Left) && shaping.stroke.is_some() {
+            shaping.stroke = None;
+            shaping.settle = Some(time.elapsed_secs() + SETTLE);
+        }
         shaping.stroke = None;
         return;
     }
@@ -597,17 +590,18 @@ pub fn shaping_text(shaping: &Shaping) -> String {
             }
         })
         .collect();
+    let _ = tools;
     format!(
-        "Mode: TERRAIN{}{} (M for the lap): {}\nBrush {:.0} m ([ ] or Shift+wheel), strength {:.1} (, . or Ctrl+wheel); left button shapes or paints",
-        if shaping.changed { ", shaped" } else { "" },
+        "Tool: {}\nBrush {:.0} m, strength {:.1}\nLeft button: shape or paint{}{}",
+        shaping.brush.tool.name(),
+        shaping.brush.radius,
+        shaping.brush.strength,
+        if shaping.changed { "\nShaped, not saved" } else { "" },
         if rebuilding(shaping) {
-            ", building the circuit anew"
+            "\nBuilding the circuit anew…"
         } else {
             ""
         },
-        tools.join("  "),
-        shaping.brush.radius,
-        shaping.brush.strength,
     )
 }
 

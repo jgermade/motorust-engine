@@ -370,48 +370,27 @@ pub fn roadside_input(
     track: Res<Track>,
     built_terrains: Res<BuiltTerrains>,
     view: Res<super::view::View>,
+    actions: Res<super::ui::Actions>,
     mut editor: ResMut<Editor>,
     mut shaping: ResMut<Shaping>,
 ) {
-    if editor.mode != Mode::Roadside {
+    use super::ui::Action;
+    if editor.mode != Mode::Roadside || actions.help {
         editor.roadside.dragging = false;
         return;
     }
-    let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let _ = &keys;
     let before = editor.roadside.placed.clone();
-    for (key, kind) in [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-    ]
-    .into_iter()
-    .zip(Kind::ALL)
-    {
-        if keys.just_pressed(key) {
-            editor.roadside.adding = Some(kind);
+    let mut add_here = false;
+    for &action in &actions.asked {
+        match action {
+            Action::Adding(kind) => editor.roadside.adding = Some(kind),
+            Action::Next => editor.roadside.select_next(),
+            Action::Remove => editor.roadside.remove_selected(),
+            Action::Flip => editor.roadside.flip_selected(),
+            Action::AddHere => add_here = true,
+            _ => {}
         }
-    }
-    if keys.just_pressed(KeyCode::Tab) {
-        editor.roadside.select_next();
-    }
-    if keys.any_just_pressed([KeyCode::Delete, KeyCode::Backspace]) {
-        editor.roadside.remove_selected();
-    }
-    if keys.just_pressed(KeyCode::KeyX) {
-        editor.roadside.flip_selected();
-    }
-    if ctrl && keys.just_pressed(KeyCode::KeyZ) {
-        if shift {
-            editor.roadside.redo();
-        } else {
-            editor.roadside.undo();
-        }
-    }
-    if ctrl && keys.just_pressed(KeyCode::KeyY) {
-        editor.roadside.redo();
     }
     // The cursor on the ground beside the road.
     let cursor = (|| {
@@ -425,10 +404,15 @@ pub fn roadside_input(
         })?;
         Some((cursor, Vec2::new(ground.x, ground.z), camera, camera_at))
     })();
-    if let Some((_, ground, _, _)) = cursor
-        && keys.just_pressed(KeyCode::KeyN)
+    // At the cursor; from the button (the cursor on it), at the middle of
+    // the view.
+    let here = match cursor {
+        Some((_, ground, _, _)) if !actions.over_ui => ground,
+        _ => view.focus,
+    };
+    if add_here
         && let (Some(kind), Some((along, side))) =
-            (editor.roadside.adding, along_and_side(&track, ground))
+            (editor.roadside.adding, along_and_side(&track, here))
     {
         let bend = bend_at(&track, along);
         editor.roadside.add(kind, along, side, bend);
@@ -437,7 +421,7 @@ pub fn roadside_input(
         editor.roadside.dragging = false;
     }
     if let Some((screen, ground, camera, camera_at)) = cursor {
-        if buttons.just_pressed(MouseButton::Left) {
+        if buttons.just_pressed(MouseButton::Left) && !actions.over_ui {
             let on_screen: Vec<Option<Vec2>> = editor
                 .roadside
                 .placed
@@ -558,10 +542,11 @@ pub fn roadside_text(roadside: &Roadside) -> String {
                 p.text.split_whitespace().collect::<Vec<_>>().join(" ")
             )
         });
+    let _ = kinds;
     format!(
-        "Mode: ROADSIDE{} (M for the lap): N adds {}; drag one along the road, X other side, Del out, Tab next\nPicked: {picked}",
-        if roadside.changed { ", changed" } else { "" },
-        kinds.join("  "),
+        "Adding: {}\nPicked: {picked}\nDrag one along the road with the left button{}",
+        roadside.adding.map_or("nothing", Kind::name),
+        if roadside.changed { "\nChanged, not saved" } else { "" },
     )
 }
 
