@@ -125,6 +125,33 @@ pub fn files() -> Result<Vec<(String, &'static str)>, String> {
         .collect()
 }
 
+/// A circuit as the map editor has it, not yet saved (see
+/// [`Circuits::parse_shaped`]): which, its file's text if it is edited, and
+/// its ground's shaping if it is.
+#[derive(Clone, Copy)]
+pub struct Edited {
+    pub index: usize,
+    pub text: Option<&'static str>,
+    pub sculpt: Option<&'static crate::world::sculpt::Sculpt>,
+}
+
+/// The ground's shaping of the circuit whose file is `path`, from its
+/// companion (see [`crate::world::sculpt::companion`]), if a pack has one;
+/// what is wrong with it, if it is wrong.
+fn sculpt_of(path: &str) -> Result<Option<&'static crate::world::sculpt::Sculpt>, String> {
+    let companion = crate::world::sculpt::companion(path);
+    if !content::packs()
+        .iter()
+        .any(|pack| content::listed(pack).contains(&companion.as_str()))
+    {
+        return Ok(None);
+    }
+    let bytes = content::try_file(&companion)?;
+    let sculpt = crate::world::sculpt::Sculpt::decode(bytes)
+        .map_err(|error| format!("{companion}: {error}"))?;
+    Ok(Some(Box::leak(Box::new(sculpt))))
+}
+
 /// The terrain's functions a game registered, by their names.
 static TERRAIN_FUNCTIONS: std::sync::RwLock<Vec<(&str, data::TerrainFunction)>> =
     std::sync::RwLock::new(Vec::new());
@@ -174,9 +201,29 @@ impl Circuits {
     /// The circuits the `files` hold (each its path and its text, in the
     /// menu's order), or what is wrong with them.
     pub fn parse(files: &[(String, &'static str)]) -> Result<Self, String> {
+        Self::parse_shaped(files, None)
+    }
+
+    /// The same, circuit `edited.index` as the map editor has it, not yet
+    /// saved (see [`crate::editor`]): its file's text, and its ground's
+    /// shaping instead of its companion's, where it says.
+    pub fn parse_shaped(
+        files: &[(String, &'static str)],
+        edited: Option<Edited>,
+    ) -> Result<Self, String> {
         let circuits = files
             .iter()
-            .map(|(path, text)| data::parse(path, text))
+            .enumerate()
+            .map(|(index, (path, text))| {
+                let edited = edited.filter(|edited| edited.index == index);
+                let text = edited.and_then(|edited| edited.text).unwrap_or(text);
+                let mut circuit: Circuit = data::parse(path, text)?;
+                circuit.scenery.sculpt = match edited.and_then(|edited| edited.sculpt) {
+                    Some(sculpt) => Some(sculpt),
+                    None => sculpt_of(path)?,
+                };
+                Ok(circuit)
+            })
             .collect::<Result<Vec<Circuit>, String>>()?;
         Ok(Circuits(Vec::leak(circuits)))
     }

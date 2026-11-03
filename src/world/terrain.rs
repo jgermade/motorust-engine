@@ -26,6 +26,17 @@ pub const SEA_LEVEL: f32 = -1.0;
 /// Hasta esta distancia de la línea central, el terreno es la prolongación de
 /// la carretera (incluido el arcén hasta los muros).
 const FLAT: f32 = WALL_DISTANCE + 1.5;
+/// How far from a road's middle the ground shaped by hand (see
+/// [`super::sculpt`]) is shaped all the way (m): from just past its walls,
+/// eased in, so that the road keeps its own ground beside it.
+pub const SCULPT_REACH: (f32, f32) = (FLAT, FLAT + 8.0);
+
+/// How much of the ground's shaping by hand there is `distance` m from the
+/// nearest road's middle.
+pub fn sculpt_reach(distance: f32) -> f32 {
+    smoothstep(SCULPT_REACH.0, SCULPT_REACH.1, distance)
+}
+
 /// How far from a bridge the ground keeps under its deck (m), and from
 /// where it is the ground as anywhere else.
 const BRIDGE_REACH: (f32, f32) = (FLAT + 12.0, FLAT + 22.0);
@@ -33,7 +44,7 @@ const BRIDGE_REACH: (f32, f32) = (FLAT + 12.0, FLAT + 22.0);
 const UNDER_ROAD: f32 = 0.03;
 const FINE_SPACING: f32 = 3.5;
 /// Margen alrededor del circuito con rejilla fina.
-pub(super) const FINE_MARGIN: f32 = 260.0;
+pub const FINE_MARGIN: f32 = 260.0;
 /// Hasta dónde llega el terreno desde el centro del circuito.
 const EXTENT: f32 = 3500.0;
 /// Cuánto crece cada celda respecto a la anterior fuera de la zona fina,
@@ -142,6 +153,8 @@ pub struct Terrain {
     /// The dams' lakes, whose water stands over the sea's (see
     /// [`Terrain::water_level`]).
     lakes: Vec<DamGround>,
+    /// The ground as shaped and painted by hand (see [`super::sculpt`]).
+    sculpt: Option<&'static super::sculpt::Sculpt>,
 }
 
 /// A piece of the ground in the world: one of its meshes, each over the
@@ -247,10 +260,22 @@ impl Terrain {
             .collect();
         let soil = scenery.soil;
         let turf = scenery.turf;
+        let sculpt = scenery.sculpt;
+        let painted =
+            |p: Vec3| sculpt.and_then(|sculpt| sculpt.paint_at(Vec2::new(p.x, p.z)).ground());
         let sites = on_cores(&grid, threads, |part: &[(Vec3, f32, f32, f32)]| {
             part.iter()
                 .map(|&(p, hollow, mountain, up)| {
-                    site(p, soil, flowers.as_ref(), turf, hollow, mountain, up)
+                    site(
+                        p,
+                        soil,
+                        flowers.as_ref(),
+                        turf,
+                        hollow,
+                        mountain,
+                        up,
+                        painted(p),
+                    )
                 })
                 .collect::<Vec<_>>()
         });
@@ -270,6 +295,7 @@ impl Terrain {
             greens: scenery.greens,
             grass_shade: scenery.grass_shade,
             lakes: shaper.dams,
+            sculpt: scenery.sculpt,
         }
     }
 
@@ -361,6 +387,12 @@ impl Terrain {
     }
 
     pub fn ground(&self, point: Vec2) -> Ground {
+        if let Some(painted) = self
+            .sculpt
+            .and_then(|sculpt| sculpt.paint_at(point).ground())
+        {
+            return painted;
+        }
         let ground = classify(
             Vec3::new(point.x, self.height(point), point.y),
             self.normal(point),
@@ -426,6 +458,8 @@ impl Terrain {
             self.on_grid(&self.hollow, point),
             self.on_grid(&self.mountain, point),
             self.on_grid(&self.up, point),
+            self.sculpt
+                .and_then(|sculpt| sculpt.paint_at(point).ground()),
         )
     }
 
@@ -1027,11 +1061,15 @@ struct Site {
     up: f32,
     /// Whether this point lies on the Moon's airless regolith (no grass or snow).
     lunar: bool,
+    /// What its ground was painted as by hand, if anything (see
+    /// [`super::sculpt::Paint`]).
+    painted: Option<Ground>,
 }
 
 /// What the look of the ground at `p` (x, height, z) turns on but the way
 /// it faces, where the grass is in `flowers` and is `turf`, `hollow` down a
 /// gully of a mountain across the sea and `mountain` its share of it.
+#[allow(clippy::too_many_arguments)]
 fn site(
     p: Vec3,
     soil: Soil,
@@ -1040,6 +1078,7 @@ fn site(
     hollow: f32,
     mountain: f32,
     up: f32,
+    painted: Option<Ground>,
 ) -> Site {
     let (snow_line, tree_line) = lines(p, hollow);
     let ground = Vec2::new(p.x, p.z);
@@ -1055,6 +1094,7 @@ fn site(
             .map(|turf| turf.steepest),
         up: up + CLIFF_RAGGED * 2.0 * (fbm(ground / 13.0 + Vec2::splat(5.0), 2) - 0.5),
         lunar: soil == Soil::Lunar && !is_earth_realm(ground),
+        painted,
     }
 }
 
@@ -1098,6 +1138,9 @@ fn look(site: &Site, style: Option<Realm>) -> Look {
     let lunar = style.map_or(site.lunar, |style| style == Realm::Moon);
     if lunar && ground != Ground::Rock {
         ground = Ground::Sand;
+    }
+    if let Some(painted) = site.painted {
+        ground = painted;
     }
     let flowers = if ground == Ground::Grass {
         site.flowers
@@ -1304,7 +1347,8 @@ impl<'a> Shaper<'a> {
             return self
                 .dams
                 .iter()
-                .fold(wild, |height, dam| dam.shape(point, height, 1.0));
+                .fold(wild, |height, dam| dam.shape(point, height, 1.0))
+                + self.shaped(point);
         };
         let track = self.track;
         let along = track.along(nearest);
@@ -1396,7 +1440,13 @@ impl<'a> Shaper<'a> {
                 .max(dam.crest.weight(along, self.lap, CREST_FADE));
             height = dam.shape(point, height, free);
         }
-        height
+        // As shaped by hand, past the walls (see `super::sculpt`).
+        height + self.shaped(point) * sculpt_reach(distance)
+    }
+
+    /// How much higher the ground was shaped by hand at `point`.
+    fn shaped(&self, point: Vec2) -> f32 {
+        self.scenery.sculpt.map_or(0.0, |sculpt| sculpt.at(point))
     }
 }
 
@@ -2108,15 +2158,19 @@ impl Builder {
 
     fn build(self, tile: f32) -> Mesh {
         let uvs: Vec<[f32; 2]> = self.uvs.iter().map(|[u, v]| [u / tile, v / tile]).collect();
-        Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::RENDER_WORLD,
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
-        .with_inserted_indices(Indices::U32(self.indices))
+        // Kept in the main world too where the map editor may shape it
+        // in place (see `crate::editor`).
+        let usage = if crate::editor::available() {
+            RenderAssetUsages::default()
+        } else {
+            RenderAssetUsages::RENDER_WORLD
+        };
+        Mesh::new(PrimitiveTopology::TriangleList, usage)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
+            .with_inserted_indices(Indices::U32(self.indices))
     }
 }
 

@@ -1606,6 +1606,15 @@ impl Track {
         Vec3::new(ground.x, height, ground.y)
     }
 
+    /// How much the road banks at point `index` of the lap's centre line
+    /// (rad, positive rising to the right: its left side lower).
+    pub fn bank_at(&self, index: usize) -> f32 {
+        self.bank
+            .get(self.wrap(index as isize))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
     /// Alturas de la línea central, una por punto: para calcular el terreno.
     pub fn elevations(&self) -> &[f32] {
         &self.elevation
@@ -1793,7 +1802,7 @@ fn open_profile(points: &[(f32, f32)], length: f32, s: f32) -> f32 {
 
 /// Altura de un perfil cerrado de `lap` metros en el punto `s`, con una curva
 /// suave (Hermite con tangentes de Catmull-Rom) que pasa por los puntos dados.
-fn profile_height(points: &[(f32, f32)], lap: f32, s: f32) -> f32 {
+pub fn profile_height(points: &[(f32, f32)], lap: f32, s: f32) -> f32 {
     let n = points.len();
     // Puntos del perfil como si se repitiera vuelta tras vuelta.
     let at = |i: isize| {
@@ -2178,12 +2187,12 @@ pub mod tests {
         // Por debajo de este radio el muro del interior de la curva se doblaría
         // sobre sí mismo, y además no habría quien la tomase: two and a half
         // times as far as the walls stand from the centre line.
+        // (The limit the map editor shows, `crate::editor::limits`.)
         for (name, track) in every_track(circuits) {
-            let min_radius = 2.5 * track.wall();
             for index in 0..track.centerline.len() {
                 let radius = 1.0 / track.curvature(index).abs();
                 assert!(
-                    radius > min_radius,
+                    !crate::editor::limits::too_tight(track.curvature(index), track.wall()),
                     "curva de radio {radius} m en {index} de {name}"
                 );
             }
@@ -2638,16 +2647,14 @@ pub mod tests {
         // bumps).
         for circuit in circuits.iter() {
             let track = Track::new(&circuit.layout);
-            let (n, step, speed) = (track.sample_count(), track.step_length(), 30.0f32);
-            let felt = |i: usize, lateral: f32| {
-                let h = |i: usize| track.surface_point(i % n, lateral).y;
-                (h(i - 1) - 2.0 * h(i) + h(i + 1)) / (step * step) * speed * speed
-            };
+            // (As the map editor shows them, `crate::editor::limits`.)
+            use crate::editor::limits::{BUMP_LATERAL, MAX_BUMP, bump_off_middle};
+            let (n, step) = (track.sample_count(), track.step_length());
             for i in 1..n {
-                for lateral in [-4.0, 4.0] {
-                    let off = (felt(i, lateral) - felt(i, 0.0)).abs();
+                for lateral in [-BUMP_LATERAL, BUMP_LATERAL] {
+                    let off = bump_off_middle(&track, i, lateral);
                     assert!(
-                        off < 0.6 * 9.81,
+                        off < MAX_BUMP,
                         "{}: {off} m/s² at {} m, {lateral} m off the middle",
                         circuit.name,
                         i as f32 * step
@@ -2668,7 +2675,7 @@ pub mod tests {
             for i in 0..n {
                 let grade = (track.elevation[(i + 1) % n] - track.elevation[i]) / step;
                 assert!(
-                    grade.abs() < 0.13,
+                    !crate::editor::limits::too_steep(grade),
                     "pendiente del {:.0} % en {i} de {name}",
                     grade * 100.0
                 );
