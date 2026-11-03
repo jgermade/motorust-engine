@@ -638,6 +638,42 @@ pub struct Scenery {
     /// registered under (see [`crate::world::themes`]).
     #[serde(default)]
     pub themes: Themes,
+    /// How the world is drawn on the screen: as the graphics options say,
+    /// or as pixel art (see [`Look`]).
+    #[serde(default)]
+    pub look: Look,
+}
+
+/// How a circuit's world is drawn on the screen.
+#[derive(Clone, Copy, PartialEq, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum Look {
+    /// As the graphics options say: at the render scale chosen, smoothed.
+    #[default]
+    Smooth,
+    /// As the pixel art of the 8- and 16-bit arcade and console games: the
+    /// world drawn at a few lines and scaled up with each of its pixels a
+    /// sharp square, its edges not smoothed, in a few shades of each of red,
+    /// green and blue, with ordered dithering between them (see
+    /// [`crate::render_scale`]). The interface stays drawn at the window's
+    /// own pixels.
+    Pixel {
+        /// How many lines high the world is drawn (224 as an arcade board's
+        /// screen), its width following the window's shape; never more
+        /// than the render scale would draw it at.
+        lines: u32,
+        /// How many shades each of red, green and blue has: 32 as a 16-bit
+        /// console's colour, fewer for a starker palette (2 at least).
+        levels: u32,
+        /// How much the ordered dithering breaks the bands between one
+        /// shade and the next: 0 not at all, 1 across a whole shade.
+        #[serde(default = "default_dither")]
+        dither: f32,
+    },
+}
+
+fn default_dither() -> f32 {
+    0.5
 }
 
 impl Scenery {
