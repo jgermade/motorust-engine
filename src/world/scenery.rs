@@ -261,6 +261,12 @@ pub enum SkyStyle {
     /// light of the lamps from overhead, white and warm, softly filling the
     /// shade, as in a shop.
     Indoor,
+    /// A retro sunset, as the covers and the arcade racers of the 1980s drew
+    /// theirs: indigo overhead, magenta down to the horizon, orange and
+    /// yellow round a huge sun low in the west-south-west, yellow to magenta, striped across
+    /// its lower half, its light laid on the sea in a broad column; pink
+    /// light and violet shade.
+    Synthwave,
 }
 
 /// The colour of the water: the blue sea, or the red water of a flooded pit
@@ -643,6 +649,55 @@ pub struct Scenery {
     /// registered under (see [`crate::world::themes`]).
     #[serde(default)]
     pub themes: Themes,
+    /// How the world is drawn: smooth, or with its ground as voxels (see
+    /// [`Look`]).
+    #[serde(default)]
+    pub look: Look,
+}
+
+/// How a circuit's world is drawn.
+#[derive(Clone, Copy, PartialEq, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum Look {
+    /// The ground as smooth as its shape.
+    #[default]
+    Smooth,
+    /// The ground as a world of voxels, built of blocks of one colour each:
+    /// `size` metres on a side near the roads, two, four and eight times as
+    /// big further off, each a column standing to the ground's height (see
+    /// [`super::terrain`]), their colours cut to `shades` of each of red,
+    /// green and blue, if given, as a palette of pixel art. Only the
+    /// drawing: the ground the bikes, the trees and the rest stand on is as
+    /// smooth as ever, a little above the blocks' tops, which never stand over
+    /// it.
+    Voxel {
+        /// How big the smallest blocks are (m), at least 0.25 m.
+        size: f32,
+        /// How many shades each of red, green and blue the blocks' colours
+        /// are cut to (2 to 256), if they are.
+        #[serde(default)]
+        shades: Option<u32>,
+    },
+}
+
+impl Look {
+    /// How big the smallest blocks of the ground are (m), if it is drawn as
+    /// voxels.
+    pub fn voxel_size(self) -> Option<f32> {
+        match self {
+            Look::Smooth => None,
+            Look::Voxel { size, .. } => Some(size.max(0.25)),
+        }
+    }
+
+    /// How many shades each of red, green and blue the blocks' colours are
+    /// cut to, if they are.
+    pub fn voxel_shades(self) -> Option<u32> {
+        match self {
+            Look::Smooth => None,
+            Look::Voxel { shades, .. } => shades.map(|shades| shades.clamp(2, 256)),
+        }
+    }
 }
 
 impl Scenery {

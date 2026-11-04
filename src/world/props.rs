@@ -108,7 +108,7 @@ pub fn spawn_props(
         occupied.push((house.position, house.width.max(house.depth)));
     }
     for row in scenery.palms {
-        occupied.extend(spawn_palms(world, track, terrain, row, assets));
+        occupied.extend(spawn_palms(world, track, terrain, scenery, row, assets));
     }
     occupied.extend(landmarks::spawn_ridden_loops(
         world,
@@ -911,7 +911,15 @@ pub struct TreePlan {
     /// The variants of each species, each one mesh (see [`merged_variant`]),
     /// full and lighter (see [`lighter`]).
     models: Vec<(Species, Vec<[Mesh; LEVELS]>)>,
+    /// On a circuit drawn as voxels, each variant photographed as a sprite
+    /// of pixel art (see [`super::sprites`]), by the models' order: the
+    /// trees are planted as those, flat, facing the camera.
+    sprites: Option<Vec<Vec<super::sprites::Photograph>>>,
 }
+
+/// How many pixels a metre the trees' sprites are, for each metre of the
+/// smallest blocks of the ground drawn as voxels.
+const SPRITE_PIXELS: f32 = 4.0;
 
 /// The colour of the bark (sRGB).
 const BARK: Color = Color::srgb(0.32, 0.22, 0.15);
@@ -1069,7 +1077,7 @@ pub fn plan_trees(track: &Track, terrain: &Terrain, scenery: &Scenery) -> TreePl
         }
     }
     let mut scratch = Assets::<Mesh>::default();
-    let models = species
+    let models: Vec<(Species, Vec<[Mesh; LEVELS]>)> = species
         .into_iter()
         .map(|kind| {
             let variants = build_tree_variants(kind, &mut scratch);
@@ -1084,10 +1092,25 @@ pub fn plan_trees(track: &Track, terrain: &Terrain, scenery: &Scenery) -> TreePl
             (kind, merged)
         })
         .collect();
+    let sprites = scenery.look.voxel_size().map(|size| {
+        let pixel = size / SPRITE_PIXELS;
+        models
+            .iter()
+            .map(|(_, variants)| {
+                variants
+                    .iter()
+                    .filter_map(|meshes| {
+                        super::sprites::photograph(&meshes[0], pixel, scenery.look.voxel_shades())
+                    })
+                    .collect()
+            })
+            .collect()
+    });
     TreePlan {
         scattered,
         forests,
         models,
+        sprites,
     }
 }
 
@@ -1149,6 +1172,28 @@ fn spawn_trees(
             .iter()
             .any(|&(at, radius)| at.distance(tree.position) < radius)
     };
+    // On a circuit drawn as voxels, the trees are their sprites: each
+    // variant's card and its material.
+    type Card = (Handle<Mesh>, Handle<StandardMaterial>);
+    let cards: Option<Vec<(Species, Vec<Card>)>> = plan.sprites.as_ref().map(|sprites| {
+        plan.models
+            .iter()
+            .zip(sprites)
+            .map(|((kind, _), photographs)| {
+                let cards = photographs
+                    .iter()
+                    .map(|photo| {
+                        let image = assets.images.add(photo.image.clone());
+                        (
+                            assets.meshes.add(super::sprites::card(photo.size)),
+                            assets.materials.add(super::sprites::card_material(image)),
+                        )
+                    })
+                    .collect();
+                (*kind, cards)
+            })
+            .collect()
+    });
     // Planted classic; dressed as the options say (see [`super::trees`]).
     let plant =
         |world: &mut ChildSpawnerCommands, leaves: &mut Vec<MirrorPoint>, tree: &PlannedTree| {
@@ -1162,6 +1207,23 @@ fn spawn_trees(
                 .with_scale(Vec3::splat(scale));
             if let Some((_, crowns)) = crowns.iter().find(|(kind, _)| *kind == tree.kind) {
                 leaves.extend(crowns[variant].iter().map(|point| point.placed(&transform)));
+            }
+            let card = cards.as_ref().and_then(|cards| {
+                let (_, variants) = cards.iter().find(|(kind, _)| *kind == tree.kind)?;
+                variants.get(variant.min(variants.len().saturating_sub(1)))
+            });
+            if let Some((mesh, material)) = card {
+                // Flat, turning to face the camera; casting no shadow, which
+                // would turn with it.
+                world.spawn((
+                    super::sprites::FacingCamera,
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                    Transform::from_xyz(tree.position.x, tree.height, tree.position.y)
+                        .with_scale(Vec3::splat(scale)),
+                    bevy::light::NotShadowCaster,
+                ));
+                return;
             }
             world.spawn((
                 Tree {
@@ -1189,6 +1251,7 @@ fn spawn_palms(
     world: &mut ChildSpawnerCommands,
     track: &Track,
     terrain: &Terrain,
+    scenery: &Scenery,
     row: &Row,
     assets: &mut Assets3d,
 ) -> Vec<Footprint> {
@@ -1199,6 +1262,25 @@ fn spawn_palms(
         cull_mode: None,
         ..default()
     });
+    // On a circuit drawn as voxels, each variant photographed as a sprite
+    // of pixel art (see [`super::sprites`]), planted flat, facing the camera.
+    let cards: Option<Vec<(Handle<Mesh>, Handle<StandardMaterial>)>> =
+        scenery.look.voxel_size().map(|size| {
+            (0..VARIANTS)
+                .filter_map(|variant| {
+                    let photo = super::sprites::photograph(
+                        &palm_mesh(variant),
+                        size / SPRITE_PIXELS,
+                        scenery.look.voxel_shades(),
+                    )?;
+                    let image = assets.images.add(photo.image);
+                    Some((
+                        assets.meshes.add(super::sprites::card(photo.size)),
+                        assets.materials.add(super::sprites::card_material(image)),
+                    ))
+                })
+                .collect()
+        });
     let models: Vec<Handle<Mesh>> = (0..VARIANTS)
         .map(|variant| assets.meshes.add(palm_mesh(variant)))
         .collect();
@@ -1206,6 +1288,21 @@ fn spawn_palms(
     for (k, (_, point)) in row_points(track, row).into_iter().enumerate() {
         let random = |n: u32| random01(k as u32 * 8 + n + 70_000 + row.lateral as u32);
         if terrain.height(point) < terrain.water_level(point) + 1.0 {
+            continue;
+        }
+        if let Some((mesh, material)) = cards
+            .as_ref()
+            .and_then(|cards| cards.get(k % cards.len().max(1)))
+        {
+            world.spawn((
+                super::sprites::FacingCamera,
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                Transform::from_xyz(point.x, terrain.height(point) - 0.2, point.y)
+                    .with_scale(Vec3::splat(0.85 + 0.35 * random(1))),
+                bevy::light::NotShadowCaster,
+            ));
+            taken.push((point, 3.0));
             continue;
         }
         world.spawn((

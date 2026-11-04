@@ -30,6 +30,7 @@ pub mod sea;
 mod shadow_fade;
 pub mod shoulders;
 pub mod sky;
+pub mod sprites;
 pub mod structures;
 pub mod terrain;
 pub mod textures;
@@ -107,6 +108,7 @@ impl Plugin for WorldPlugin {
             realm::RealmPlugin,
             relief::ReliefPlugin,
             lawn::LawnPlugin,
+            sprites::SpritesPlugin,
         ));
         // In a desktop development build, read again when their files
         // change on the disk.
@@ -295,7 +297,8 @@ fn prepare(
     let circuit = circuits.at(index);
     let scenery = &circuit.scenery;
     let track = Track::new(&circuit.layout);
-    let terrain = terrain::Terrain::on_threads(&track, scenery, urgency.threads());
+    let mut terrain = terrain::Terrain::on_threads(&track, scenery, urgency.threads());
+    terrain.paint_blocks(textures);
     let mut ground = if realm::splits(scenery) {
         realm_ground(&terrain, urgency.threads())
     } else {
@@ -393,13 +396,18 @@ fn prepare_rest(basis: &Basis, textures: &textures::WorldTextures, urgency: Urge
             urgency.threads(),
         )
     });
-    let grass = tufts::tuft_pieces(
-        track,
-        terrain,
-        &basis.roadside.shoulders,
-        &basis.roadside.edges,
-        textures,
-    );
+    // On a circuit drawn as voxels, no tufts nor ragged edge of grass by the
+    // road: its grass is the blocks', banded as an arcade racer's.
+    let grass = match scenery.look.voxel_size() {
+        Some(_) => Vec::new(),
+        None => tufts::tuft_pieces(
+            track,
+            terrain,
+            &basis.roadside.shoulders,
+            &basis.roadside.edges,
+            textures,
+        ),
+    };
     Rest {
         sea_mirror,
         grass,

@@ -50,6 +50,8 @@ pub mod testing;
 pub mod track;
 pub mod track_select;
 pub mod ui;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod updater;
 pub mod vector_art;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
@@ -185,6 +187,8 @@ pub fn app() -> App {
         ));
     #[cfg(target_arch = "wasm32")]
     app.add_plugins(web::WebPlugin);
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(updater::UpdaterPlugin);
     #[cfg(not(target_arch = "wasm32"))]
     if bench {
         app.add_plugins(bench::BenchPlugin);

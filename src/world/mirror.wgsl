@@ -27,7 +27,8 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(4) var sky: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var sky_sampler: sampler;
 struct LakeLook {
-    // The water's own colour, deep down (linear).
+    // The water's own colour, deep down (linear); w: how tightly the sun's
+    // glint gathers round its reflection (the power of its fall-off).
     deep: vec4<f32>,
     // xyz: towards the sun; w: how bright its glint is.
     sun: vec4<f32>,
@@ -187,7 +188,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let azimuth = atan2(r.x, -r.z);
     let sky_uv = vec2(fract(azimuth / (2.0 * PI)), 1.0 - elevation / (0.5 * PI));
     let sky_color = textureSampleLevel(sky, sky_sampler, sky_uv, 0.0).rgb;
-    let glint = pow(max(dot(r, look.sun.xyz), 0.0), 600.0) * look.sun.w;
+    let glint = pow(max(dot(r, look.sun.xyz), 0.0), max(look.deep.w, 1.0)) * look.sun.w;
     var reflected = select(sky_color + vec3(glint), ground, hit);
     // What stands shows faintly over what is behind it, broken up.
     reflected = mix(reflected, stands.rgb, STANDING_SEEN * stands.a * unbroken(p.xz, globals.time));

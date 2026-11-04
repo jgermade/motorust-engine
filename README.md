@@ -11,8 +11,9 @@ that makes a motorbike racing game, knowing nothing of the content it runs.
   points, heights, banking, branches, forks, loops) and their scenery
   (terrain shaped by mountains, coasts, lakes and rivers; walls, tunnels,
   bridges, dams, the sea, the sky, trees, grass, flowers, petals, houses,
-  landmarks, portals between realms, excavations), read again when a file
-  changes in a development build.
+  landmarks, portals between realms, excavations) and how their ground is
+  drawn (smooth, or in blocks as voxels: `look: Voxel(block: 1.75)`), read
+  again when a file changes in a development build.
 - **The race**: modes (a race, a championship, against the clock,
   elimination, free ride), the HUD and minimap, the menus, options and
   settings, local split screen, gamepads, sound synthesised in real time and
