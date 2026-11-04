@@ -86,6 +86,10 @@ pub struct WorldTextures {
     /// The average colour of the grass texture: the tufts of grass are
     /// painted it (see [`super::tufts`]).
     pub grass_color: Color,
+    /// The average colours of the ground's textures: the ground drawn as
+    /// voxels, in its colours alone, is painted them (see
+    /// [`super::terrain::Terrain::paint_blocks`]).
+    pub ground_colors: GroundColors,
     /// The lawn as painted, kept to paint it in flower for the circuits with
     /// fields of flowers, as they are prepared (see
     /// [`super::foliage::meadow`]).
@@ -187,7 +191,17 @@ impl FromWorld for WorldTextures {
                 (&strata, STRATA_BUMPS),
             ],
         );
+        let mean = |handle: &Handle<Image>| images.get(handle).map_or(Color::WHITE, average_color);
+        let ground_colors = GroundColors {
+            grass: grass_color,
+            rock: mean(&rock),
+            granite: mean(&granite),
+            sand: mean(&sand),
+            soil: mean(&soil),
+            floor: mean(&floor),
+        };
         Self {
+            ground_colors,
             grass,
             grass_wide,
             rock,
@@ -295,6 +309,18 @@ const STRATA_BUMPS: Bumps = Bumps {
 
 /// The average colour of the full-size level of an sRGB image, averaged in
 /// linear space.
+/// The average colours of the ground's textures (see
+/// [`WorldTextures::ground_colors`]).
+#[derive(Clone, Copy, Debug)]
+pub struct GroundColors {
+    pub grass: Color,
+    pub rock: Color,
+    pub granite: Color,
+    pub sand: Color,
+    pub soil: Color,
+    pub floor: Color,
+}
+
 fn average_color(image: &Image) -> Color {
     let pixels = (image.width() * image.height()) as usize;
     let Some(data) = image.data.as_ref() else {

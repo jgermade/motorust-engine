@@ -10,7 +10,7 @@ pub mod flowers;
 mod foliage;
 mod lamps;
 pub mod landmarks;
-pub(crate) mod lawn;
+mod lawn;
 pub mod lettering;
 mod lod;
 pub mod mirror;
@@ -36,7 +36,6 @@ pub mod textures;
 pub mod themes;
 pub mod trees;
 pub mod tufts;
-pub mod voxel;
 pub mod waters;
 
 use std::collections::{HashMap, HashSet};
@@ -108,7 +107,6 @@ impl Plugin for WorldPlugin {
             realm::RealmPlugin,
             relief::ReliefPlugin,
             lawn::LawnPlugin,
-            voxel::VoxelPlugin,
         ));
         // In a desktop development build, read again when their files
         // change on the disk.
@@ -297,7 +295,8 @@ fn prepare(
     let circuit = circuits.at(index);
     let scenery = &circuit.scenery;
     let track = Track::new(&circuit.layout);
-    let terrain = terrain::Terrain::on_threads(&track, scenery, urgency.threads());
+    let mut terrain = terrain::Terrain::on_threads(&track, scenery, urgency.threads());
+    terrain.paint_blocks(textures);
     let mut ground = if realm::splits(scenery) {
         realm_ground(&terrain, urgency.threads())
     } else {

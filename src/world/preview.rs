@@ -61,7 +61,8 @@ pub(super) fn prepare_preview(
     let track = Track::new(&circuit.layout);
     let stretch = stretch(track.lap_length());
     let near = stretch_box(&track, stretch);
-    let terrain = Terrain::shaped_within(&track, scenery, urgency.threads(), near);
+    let mut terrain = Terrain::shaped_within(&track, scenery, urgency.threads(), near);
+    terrain.paint_blocks(textures);
     let mut ground = terrain.meshes(urgency.threads());
     let shore = sea::ShoreMap::new(&terrain, &track);
     let shore_image = shore.image();

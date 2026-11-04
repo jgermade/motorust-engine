@@ -656,52 +656,40 @@ pub enum Look {
     /// The ground as smooth as its shape.
     #[default]
     Smooth,
-    /// The ground as a world of small voxels: drawn as if it were made of
-    /// cubes `size` metres on a side, each of one colour (cut to `shades` of
-    /// each of red, green and blue, if given) and lit as the face
-    /// of a cube it shows, a top or a side, as a staircase of them over the
-    /// ground's slopes would be (see [`super::voxel`]). Optionally, `steps`
-    /// metres high, the ground's own shape in blocks too (see
-    /// [`super::terrain`]). Only the drawing: the ground the bikes, the trees
-    /// and the rest stand on is as smooth as ever.
+    /// The ground as a world of voxels, built of blocks of one colour each:
+    /// `size` metres on a side near the roads, two, four and eight times as
+    /// big further off, each a column standing to the ground's height (see
+    /// [`super::terrain`]), their colours cut to `shades` of each of red,
+    /// green and blue, if given, as a palette of pixel art. Only the
+    /// drawing: the ground the bikes, the trees and the rest stand on is as
+    /// smooth as ever, a little above the blocks' tops, which never stand over
+    /// it.
     Voxel {
-        /// How big each voxel is (m), at least 0.05 m.
+        /// How big the smallest blocks are (m), at least 0.25 m.
         size: f32,
-        /// How high each step of the ground's shape in blocks is (m), at
-        /// least 0.25 m, if its shape is in blocks too.
-        #[serde(default)]
-        steps: Option<f32>,
-        /// How many shades each of red, green and blue each voxel's colour
-        /// is cut to, as a palette of pixel art (2 to 256), if it is.
+        /// How many shades each of red, green and blue the blocks' colours
+        /// are cut to (2 to 256), if they are.
         #[serde(default)]
         shades: Option<u32>,
     },
 }
 
 impl Look {
-    /// How big each voxel of the ground is (m), if it is drawn as voxels.
+    /// How big the smallest blocks of the ground are (m), if it is drawn as
+    /// voxels.
     pub fn voxel_size(self) -> Option<f32> {
         match self {
             Look::Smooth => None,
-            Look::Voxel { size, .. } => Some(size.max(0.05)),
+            Look::Voxel { size, .. } => Some(size.max(0.25)),
         }
     }
 
-    /// How many shades each of red, green and blue each voxel's colour is
-    /// cut to, if it is.
+    /// How many shades each of red, green and blue the blocks' colours are
+    /// cut to, if they are.
     pub fn voxel_shades(self) -> Option<u32> {
         match self {
             Look::Smooth => None,
             Look::Voxel { shades, .. } => shades.map(|shades| shades.clamp(2, 256)),
-        }
-    }
-
-    /// How high each step of the ground's shape in blocks is (m), if its
-    /// shape is in blocks.
-    pub fn voxel_steps(self) -> Option<f32> {
-        match self {
-            Look::Smooth => None,
-            Look::Voxel { steps, .. } => steps.map(|steps| steps.max(0.25)),
         }
     }
 }
