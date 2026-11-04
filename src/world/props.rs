@@ -911,7 +911,15 @@ pub struct TreePlan {
     /// The variants of each species, each one mesh (see [`merged_variant`]),
     /// full and lighter (see [`lighter`]).
     models: Vec<(Species, Vec<[Mesh; LEVELS]>)>,
+    /// On a circuit drawn as voxels, each variant photographed as a sprite
+    /// of pixel art (see [`super::sprites`]), by the models' order: the
+    /// trees are planted as those, flat, facing the camera.
+    sprites: Option<Vec<Vec<super::sprites::Photograph>>>,
 }
+
+/// How many pixels a metre the trees' sprites are, for each metre of the
+/// smallest blocks of the ground drawn as voxels.
+const SPRITE_PIXELS: f32 = 4.0;
 
 /// The colour of the bark (sRGB).
 const BARK: Color = Color::srgb(0.32, 0.22, 0.15);
@@ -1069,7 +1077,7 @@ pub fn plan_trees(track: &Track, terrain: &Terrain, scenery: &Scenery) -> TreePl
         }
     }
     let mut scratch = Assets::<Mesh>::default();
-    let models = species
+    let models: Vec<(Species, Vec<[Mesh; LEVELS]>)> = species
         .into_iter()
         .map(|kind| {
             let variants = build_tree_variants(kind, &mut scratch);
@@ -1084,10 +1092,25 @@ pub fn plan_trees(track: &Track, terrain: &Terrain, scenery: &Scenery) -> TreePl
             (kind, merged)
         })
         .collect();
+    let sprites = scenery.look.voxel_size().map(|size| {
+        let pixel = size / SPRITE_PIXELS;
+        models
+            .iter()
+            .map(|(_, variants)| {
+                variants
+                    .iter()
+                    .filter_map(|meshes| {
+                        super::sprites::photograph(&meshes[0], pixel, scenery.look.voxel_shades())
+                    })
+                    .collect()
+            })
+            .collect()
+    });
     TreePlan {
         scattered,
         forests,
         models,
+        sprites,
     }
 }
 
@@ -1149,6 +1172,28 @@ fn spawn_trees(
             .iter()
             .any(|&(at, radius)| at.distance(tree.position) < radius)
     };
+    // On a circuit drawn as voxels, the trees are their sprites: each
+    // variant's card and its material.
+    type Card = (Handle<Mesh>, Handle<StandardMaterial>);
+    let cards: Option<Vec<(Species, Vec<Card>)>> = plan.sprites.as_ref().map(|sprites| {
+        plan.models
+            .iter()
+            .zip(sprites)
+            .map(|((kind, _), photographs)| {
+                let cards = photographs
+                    .iter()
+                    .map(|photo| {
+                        let image = assets.images.add(photo.image.clone());
+                        (
+                            assets.meshes.add(super::sprites::card(photo.size)),
+                            assets.materials.add(super::sprites::card_material(image)),
+                        )
+                    })
+                    .collect();
+                (*kind, cards)
+            })
+            .collect()
+    });
     // Planted classic; dressed as the options say (see [`super::trees`]).
     let plant =
         |world: &mut ChildSpawnerCommands, leaves: &mut Vec<MirrorPoint>, tree: &PlannedTree| {
@@ -1162,6 +1207,23 @@ fn spawn_trees(
                 .with_scale(Vec3::splat(scale));
             if let Some((_, crowns)) = crowns.iter().find(|(kind, _)| *kind == tree.kind) {
                 leaves.extend(crowns[variant].iter().map(|point| point.placed(&transform)));
+            }
+            let card = cards.as_ref().and_then(|cards| {
+                let (_, variants) = cards.iter().find(|(kind, _)| *kind == tree.kind)?;
+                variants.get(variant.min(variants.len().saturating_sub(1)))
+            });
+            if let Some((mesh, material)) = card {
+                // Flat, turning to face the camera; casting no shadow, which
+                // would turn with it.
+                world.spawn((
+                    super::sprites::FacingCamera,
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                    Transform::from_xyz(tree.position.x, tree.height, tree.position.y)
+                        .with_scale(Vec3::splat(scale)),
+                    bevy::light::NotShadowCaster,
+                ));
+                return;
             }
             world.spawn((
                 Tree {

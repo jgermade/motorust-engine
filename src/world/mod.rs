@@ -30,6 +30,7 @@ pub mod sea;
 mod shadow_fade;
 pub mod shoulders;
 pub mod sky;
+pub mod sprites;
 pub mod structures;
 pub mod terrain;
 pub mod textures;
@@ -107,6 +108,7 @@ impl Plugin for WorldPlugin {
             realm::RealmPlugin,
             relief::ReliefPlugin,
             lawn::LawnPlugin,
+            sprites::SpritesPlugin,
         ));
         // In a desktop development build, read again when their files
         // change on the disk.
