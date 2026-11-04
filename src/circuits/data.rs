@@ -147,13 +147,16 @@ fn named(name: &str) -> Result<fn(Vec2) -> f32, String> {
 }
 
 /// How a file writes a [`Song`]: its MP3 by the name of its file in
-/// `assets/music/`, how long it lasts and how loud it is.
+/// `assets/music/`, how long it lasts and how loud it is, and, if it says,
+/// its title.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SongFile {
     file: String,
     length: f32,
     loudness: f32,
+    #[serde(default)]
+    title: Option<String>,
 }
 
 impl TryFrom<SongFile> for Song {
@@ -164,6 +167,7 @@ impl TryFrom<SongFile> for Song {
             file,
             length,
             loudness,
+            title,
         }: SongFile,
     ) -> Result<Self, String> {
         if file.contains(['/', '\\']) || !file.ends_with(".mp3") {
@@ -175,6 +179,7 @@ impl TryFrom<SongFile> for Song {
             file: String::leak(format!("music/{file}")),
             length,
             loudness,
+            title: title.map(String::leak).map(|title| &*title),
         })
     }
 }
