@@ -94,7 +94,18 @@ pub struct Palette {
     /// How the picture is graded, as a film is: not at all but on a clear
     /// day (see [`Grade`]).
     grade: Grade,
+    /// The sun's glint on the water (see `mirror.wgsl`): how tightly it
+    /// gathers round the sun's reflection (the power of its fall-off; high,
+    /// a small sharp spark), and how bright it is.
+    pub glint: (f32, f32),
 }
+
+/// The sun's glint on the water of most skies: a small, sharp spark.
+const GLINT: (f32, f32) = (600.0, 4.0);
+/// How much bigger the retro sunset's sun is than the others'.
+const SYNTHWAVE_SUN: f32 = 2.6;
+/// The retro sunset's sun's picture (px a side).
+const SYNTHWAVE_SUN_IMAGE: u32 = 256;
 
 /// A colour grade of the whole picture: how much saturation it keeps (after
 /// tonemapping), how much contrast its midtones get, how many stops lighter
@@ -162,6 +173,7 @@ impl Palette {
                     exposure: 0.25,
                     ..Grade::NONE
                 },
+                glint: GLINT,
             },
             SkyStyle::Day => Self {
                 zenith: ZENITH,
@@ -179,6 +191,7 @@ impl Palette {
                 clouds: Color::WHITE,
                 fog: FOG,
                 grade: Grade::NONE,
+                glint: GLINT,
             },
             // A summer sunset in high country: the sun low in the south-east
             // and golden, raking across the hills so that each casts a long
@@ -215,6 +228,7 @@ impl Palette {
                     warmth: 0.008,
                     highlight_saturation: 0.72,
                 },
+                glint: GLINT,
             },
             // A clear Mediterranean summer afternoon, as a photograph shows
             // it rather than a cartoon: the sky a deep but not vivid blue
@@ -250,6 +264,7 @@ impl Palette {
                     warmth: 0.006,
                     highlight_saturation: 0.75,
                 },
+                glint: GLINT,
             },
             // The sun low in the west-north-west, in front on the start
             // straight: violet overhead, rose above the horizon and orange
@@ -271,6 +286,7 @@ impl Palette {
                 clouds: Color::srgb(1.0, 0.76, 0.66),
                 fog: FOG,
                 grade: Grade::NONE,
+                glint: GLINT,
             },
             // The airless sky of the Moon: nearly black overhead, deep indigo
             // above the horizon and dark slate-blue at the horizon; fierce
@@ -298,6 +314,7 @@ impl Palette {
                     warmth: -0.004,
                     highlight_saturation: 0.85,
                 },
+                glint: GLINT,
             },
             // Indoors, under the lamps of a shop's ceiling: no sky to see
             // (the room's walls and ceiling hide it; what is left of it is
@@ -328,6 +345,38 @@ impl Palette {
                     warmth: 0.003,
                     highlight_saturation: 0.9,
                 },
+                glint: GLINT,
+            },
+            // A retro sunset, as the 1980s drew it: indigo overhead, magenta
+            // down to the horizon, orange and yellow only round a huge sun low
+            // in the west-south-west, over the sea (so that the water mirrors
+            // magenta, dark, and the sun's column of light shows on it); pink light, violet shade,
+            // magenta clouds; colours a little more saturated and contrasted;
+            // the sun's light laid on the water in a broad column.
+            SkyStyle::Synthwave => Self {
+                zenith: Color::srgb(0.09, 0.03, 0.28),
+                above_horizon: Color::srgb(0.62, 0.12, 0.5),
+                horizon: Color::srgb(0.92, 0.32, 0.52),
+                glow: 0.8,
+                glow_color: Color::srgb(1.0, 0.78, 0.4),
+                sun_azimuth: 1.32 * std::f32::consts::PI,
+                sun_elevation: 0.07,
+                // In its picture's own colours.
+                sun_disc: Color::WHITE,
+                sunlight: Color::srgb(1.0, 0.56, 0.62),
+                sunlight_strength: 0.75,
+                ambient: Color::srgb(0.62, 0.42, 0.95),
+                ambient_brightness: 600.0,
+                clouds: Color::srgb(0.96, 0.46, 0.76),
+                fog: FOG,
+                grade: Grade {
+                    saturation: 1.15,
+                    contrast: 1.08,
+                    exposure: 0.0,
+                    warmth: 0.0,
+                    highlight_saturation: 1.0,
+                },
+                glint: (220.0, 2.5),
             },
         }
     }
@@ -365,7 +414,7 @@ pub struct SkyParts {
     sun: Entity,
     sun_material: Handle<StandardMaterial>,
     /// The sun as it looks through the air, and in space.
-    sun_images: [Handle<Image>; 2],
+    sun_images: [Handle<Image>; 3],
     space_sky: Entity,
     /// Each cloud's material and how opaque it is.
     clouds: Vec<(Handle<StandardMaterial>, f32)>,
@@ -387,6 +436,10 @@ pub struct Sunlight;
 /// turn round the sky (rad/s).
 const CLOUDS: usize = 22;
 const CLOUD_DISTANCE: f32 = 4200.0;
+/// How far off the sun's disc is (m): behind the clouds, which pass in
+/// front of it, and inside the sky's dome; as much bigger as it is further,
+/// so that it looks as big as it did among them.
+const SUN_DISTANCE: f32 = CLOUD_DISTANCE * 1.06;
 const CLOUD_ELEVATION: (f32, f32) = (0.035, 0.24);
 const CLOUD_WIDTH: (f32, f32) = (650.0, 1250.0);
 const CLOUD_DRIFT: f32 = 0.004;
@@ -465,7 +518,8 @@ pub fn spawn_sky(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let sun_images = [sun_image(), space_sun_image()].map(|image| images.add(image));
+    let sun_images =
+        [sun_image(), space_sun_image(), synthwave_sun_image()].map(|image| images.add(image));
     let sun_material = materials.add(StandardMaterial {
         base_color_texture: Some(sun_images[0].clone()),
         alpha_mode: AlphaMode::Blend,
@@ -579,12 +633,12 @@ pub fn spawn_sky(
             NotShadowCaster,
         ))
         .with_children(|sky| {
-            let at = palette.sun_direction() * CLOUD_DISTANCE;
+            let at = palette.sun_direction() * SUN_DISTANCE;
             sun = sky
                 .spawn((
                     Mesh3d(quad.clone()),
                     MeshMaterial3d(sun_material.clone()),
-                    facing_the_camera(at, Vec2::splat(SUN_SIZE)),
+                    facing_the_camera(at, Vec2::splat(SUN_SIZE * SUN_DISTANCE / CLOUD_DISTANCE)),
                     NotShadowCaster,
                 ))
                 .id();
@@ -753,17 +807,22 @@ pub fn light_the_sky(
     let sun = palette.sun_direction();
     // In space, the sun with no air round it: small and sharp.
     let space = style == SkyStyle::Space;
+    let retro = style == SkyStyle::Synthwave;
     let sun_size = if space {
         2.0 * SPACE_SUN_GLOW * CLOUD_DISTANCE * (SPACE_SUN_DIAMETER.to_radians() / 2.0).tan()
+    } else if retro {
+        SUN_SIZE * SYNTHWAVE_SUN
     } else {
         SUN_SIZE
     };
     if let Ok(mut transform) = transforms.get_mut(parts.sun) {
-        *transform = facing_the_camera(sun * CLOUD_DISTANCE, Vec2::splat(sun_size));
+        let size = sun_size * SUN_DISTANCE / CLOUD_DISTANCE;
+        *transform = facing_the_camera(sun * SUN_DISTANCE, Vec2::splat(size));
     }
     if let Some(mut material) = materials.get_mut(&parts.sun_material) {
         material.base_color = palette.sun_disc;
-        material.base_color_texture = Some(parts.sun_images[usize::from(space)].clone());
+        let image = if retro { 2 } else { usize::from(space) };
+        material.base_color_texture = Some(parts.sun_images[image].clone());
     }
     let cloud_alpha = palette.clouds.alpha();
     for (material, opacity) in &parts.clouds {
@@ -1246,6 +1305,52 @@ fn sun_image() -> Image {
             let glow = (1.0 - r).max(0.0).powi(3) * 0.45;
             let alpha = disc.clamp(0.0, 1.0).max(glow);
             data.extend([255, 250, 226, (alpha * 255.0).round() as u8]);
+        }
+    }
+    smooth_image(size, size, data)
+}
+
+/// The retro sunset's sun: a disc from yellow at its top to orange and
+/// magenta at its bottom, its lower half cut across by stripes, each
+/// thicker than the one above it, as the 1980s drew it; a soft glow round
+/// it.
+fn synthwave_sun_image() -> Image {
+    let size = SYNTHWAVE_SUN_IMAGE;
+    let top = Vec3::new(1.0, 0.95, 0.5);
+    let middle = Vec3::new(1.0, 0.6, 0.32);
+    let bottom = Vec3::new(1.0, 0.22, 0.6);
+    let mut data = Vec::with_capacity((size * size * 4) as usize);
+    for y in 0..size {
+        for x in 0..size {
+            let p = (Vec2::new(x as f32, y as f32) + 0.5) / size as f32 * 2.0 - 1.0;
+            let r = p.length();
+            // Down the disc, 0 at its top to 1 at its bottom.
+            let down = ((p.y + 0.42) / 0.84).clamp(0.0, 1.0);
+            let color = if down < 0.5 {
+                top.lerp(middle, down * 2.0)
+            } else {
+                middle.lerp(bottom, down * 2.0 - 1.0)
+            };
+            let disc = ((0.42 - r) * size as f32 * 0.5 + 0.5).clamp(0.0, 1.0);
+            // The stripes, over its lower half: gaps a band of the disc wide,
+            // thicker lower down.
+            let striped = if down > 0.5 {
+                let band = (down - 0.5) / 0.5;
+                let phase = (band * 7.0).fract();
+                phase < 0.15 + 0.45 * band
+            } else {
+                false
+            };
+            let disc = if striped { 0.0 } else { disc };
+            let glow = (1.0 - r).max(0.0).powi(3) * 0.35;
+            let alpha = disc.max(glow);
+            let color = if disc > 0.0 { color } else { middle };
+            data.extend([
+                (color.x * 255.0).round() as u8,
+                (color.y * 255.0).round() as u8,
+                (color.z * 255.0).round() as u8,
+                (alpha * 255.0).round() as u8,
+            ]);
         }
     }
     smooth_image(size, size, data)
@@ -2167,5 +2272,48 @@ mod tests {
             .unwrap()
             .save(out)
             .unwrap();
+    }
+    #[test]
+    fn the_retro_sunset_is_a_huge_striped_sun_low_over_the_sea_in_magenta_and_indigo() {
+        let retro = Palette::of(SkyStyle::Synthwave);
+        let dusk = Palette::of(SkyStyle::Dusk);
+        // Low, in the south-west.
+        let sun = retro.sun_direction();
+        assert!(sun.y > 0.0 && sun.y < 0.1, "{sun}");
+        assert!(sun.x < 0.0 && sun.z > 0.0, "{sun}");
+        // Indigo overhead, magenta above the horizon, warmer at it.
+        let zenith = retro.sky_color(Vec3::Y).to_srgba();
+        assert!(zenith.blue > zenith.red && zenith.blue > zenith.green);
+        let above = retro.sky_color(direction(0.0, 0.25)).to_srgba();
+        assert!(
+            above.red > above.green && above.blue > above.green,
+            "{above:?}"
+        );
+        // Its glint on the water a column under the sun, wider than the
+        // others' spark, and not so bright it whitens the sea.
+        assert!(retro.glint.0 < dusk.glint.0 / 2.0);
+        assert!(retro.glint.1 <= dusk.glint.1);
+        // Striped across its lower half, and whole across its upper.
+        let image = synthwave_sun_image();
+        let size = SYNTHWAVE_SUN_IMAGE as usize;
+        let data = image.data.as_ref().unwrap();
+        let alpha = |y: f32| data[((y * size as f32) as usize * size + size / 2) * 4 + 3];
+        let upper: Vec<u8> = (30..48).map(|k| alpha(k as f32 / 100.0)).collect();
+        assert!(upper.iter().all(|&a| a == 255), "{upper:?}");
+        let lower: Vec<u8> = (55..70).map(|k| alpha(k as f32 / 100.0)).collect();
+        assert!(
+            lower.contains(&255) && lower.iter().any(|&a| a < 128),
+            "{lower:?}"
+        );
+    }
+    #[test]
+    fn the_sun_is_behind_the_clouds_and_inside_the_sky() {
+        let furthest = cloud_places()
+            .iter()
+            .chain(cirrus_places().iter())
+            .map(|(at, _)| at.length())
+            .fold(0.0, f32::max);
+        assert!(SUN_DISTANCE > furthest + 100.0, "{SUN_DISTANCE} {furthest}");
+        const { assert!(SUN_DISTANCE < RADIUS) };
     }
 }

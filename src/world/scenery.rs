@@ -261,6 +261,12 @@ pub enum SkyStyle {
     /// light of the lamps from overhead, white and warm, softly filling the
     /// shade, as in a shop.
     Indoor,
+    /// A retro sunset, as the covers and the arcade racers of the 1980s drew
+    /// theirs: indigo overhead, magenta down to the horizon, orange and
+    /// yellow round a huge sun low in the west-south-west, yellow to magenta, striped across
+    /// its lower half, its light laid on the sea in a broad column; pink
+    /// light and violet shade.
+    Synthwave,
 }
 
 /// The colour of the water: the blue sea, or the red water of a flooded pit

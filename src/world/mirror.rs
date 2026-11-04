@@ -41,8 +41,6 @@ const DEEP: Color = Color::srgb(0.06, 0.17, 0.22);
 const DEEP_IRON: Color = Color::srgb(0.24, 0.06, 0.04);
 /// High country's rivers and lakes: deep green and grey.
 const DEEP_RIVER: Color = Color::srgb(0.07, 0.18, 0.2);
-/// How bright the sun's glint on the water is.
-const GLINT: f32 = 4.0;
 /// The ground as it is lit for the mirror: its colour times this much in
 /// the shade, and this much more facing the sun.
 const MIRROR_SHADE: f32 = 0.55;
@@ -98,10 +96,22 @@ pub struct MirrorMaterial {
 /// The water's own colour and the sun's glint on it (see `mirror.wgsl`).
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct MirrorLook {
-    /// The water's colour, deep down (linear).
+    /// The water's colour, deep down (linear); w: how tightly the sun's
+    /// glint gathers round its reflection (see [`Palette::glint`]).
     pub deep: Vec4,
     /// xyz: towards the sun; w: how bright its glint is.
     pub sun: Vec4,
+}
+
+impl MirrorLook {
+    /// Water deep down `deep` (sRGB), under the sky of `palette`.
+    pub fn under(palette: &Palette, deep: Color) -> Self {
+        let (power, bright) = palette.glint;
+        Self {
+            deep: deep.to_linear().to_vec3().extend(power),
+            sun: palette.sun_direction().extend(bright),
+        }
+    }
 }
 
 impl Material for MirrorMaterial {
@@ -452,10 +462,7 @@ pub fn prepare_mirror(
     PreparedMirror {
         area: corner.extend(size.x).extend(size.y),
         water: Vec4::new(reach.level, highest, reach.follow, 0.0),
-        look: MirrorLook {
-            deep: deep.to_linear().to_vec4(),
-            sun: sun.extend(GLINT),
-        },
+        look: MirrorLook::under(&palette, deep),
         surroundings,
         sky: sky_map(&palette),
         standing: None,
@@ -472,10 +479,7 @@ pub fn sky_mirror(scenery: &Scenery, reach: &Reach, deep: Color) -> PreparedMirr
     PreparedMirror {
         area: reach.min.extend(size.x).extend(size.y),
         water: Vec4::new(reach.level, 0.0, reach.follow, 0.0),
-        look: MirrorLook {
-            deep: deep.to_linear().to_vec4(),
-            sun: palette.sun_direction().extend(GLINT),
-        },
+        look: MirrorLook::under(&palette, deep),
         // One texel of nothing, under the water, over the whole of it.
         surroundings: map_image(
             (1, 1),
