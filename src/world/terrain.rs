@@ -192,7 +192,18 @@ pub struct VoxelGrid {
     /// ground's tints, as the textures would be (see
     /// [`Terrain::paint_blocks`]); white until they are given.
     paints: [Vec3; 4],
+    /// Near the roads, which band of the arcade road's (see
+    /// [`super::road::ARCADE_BAND`]) each cell `size` metres on a side of the
+    /// grid is beside, by rows: the grass there is banded in step with the
+    /// road's (0 or 1; [`NO_BAND`] further off).
+    bands: Vec<u8>,
 }
+
+/// How far from a road's middle (m) the grass beside it is banded in step
+/// with the arcade road's (see [`VoxelGrid::bands`]).
+const BANDED_REACH: f32 = 30.0;
+/// A cell of the grid no road's bands reach.
+const NO_BAND: u8 = u8::MAX;
 
 impl VoxelGrid {
     /// The blocks over `fine` (its corners) round `track`'s roads.
@@ -240,6 +251,34 @@ impl VoxelGrid {
                 size * (1 << ring) as f32
             })
             .collect();
+        // The bands beside each road: across it, every half a cell, from
+        // each point of its middle, the nearest road's band winning.
+        let (cells_across, cells_down) =
+            (across * TILE_BLOCKS as usize, down * TILE_BLOCKS as usize);
+        let mut bands = vec![NO_BAND; cells_across * cells_down];
+        let mut nearest = vec![f32::INFINITY; cells_across * cells_down];
+        for road in std::iter::once(track).chain(track.side_roads()) {
+            let step = road.step_length();
+            for index in 0..road.sample_count() {
+                let band = super::road::arcade_band(index as f32 * step) as u8;
+                let mut lateral = -BANDED_REACH;
+                while lateral <= BANDED_REACH {
+                    let cell = ((road.offset_point(index, lateral) - origin) / size).floor();
+                    if cell.x >= 0.0
+                        && cell.y >= 0.0
+                        && (cell.x as usize) < cells_across
+                        && (cell.y as usize) < cells_down
+                    {
+                        let at = cell.y as usize * cells_across + cell.x as usize;
+                        if lateral.abs() < nearest[at] {
+                            nearest[at] = lateral.abs();
+                            bands[at] = band;
+                        }
+                    }
+                    lateral += size / 2.0;
+                }
+            }
+        }
         Self {
             origin,
             across,
@@ -249,7 +288,20 @@ impl VoxelGrid {
             blocks,
             shades,
             paints: [Vec3::ONE; 4],
+            bands,
         }
+    }
+
+    /// Which band of the arcade road's the ground at `point` is beside, if
+    /// it is near a road (see [`Self::bands`]).
+    pub fn band_at(&self, point: Vec2) -> Option<u8> {
+        if !self.contains(point) {
+            return None;
+        }
+        let cells_across = self.across * TILE_BLOCKS as usize;
+        let cell = ((point - self.origin) / self.size).floor();
+        let band = self.bands[cell.y as usize * cells_across + cell.x as usize];
+        (band != NO_BAND).then_some(band)
     }
 
     /// Whether `point` is over the blocks.
@@ -1092,9 +1144,18 @@ impl Terrain {
         } else {
             color
         };
-        // A little lighter or darker than the next block.
+        // A little lighter or darker than the next block; the grass by the
+        // road, in bands of two greens in step with the road's, as an arcade
+        // racer's, each block of them hardly lighter or darker than the next.
         let cube = (p / grid.size).floor().as_ivec3();
-        let jitter = 0.9 + 0.2 * hash01(cube);
+        let banded = match ground {
+            Ground::Grass => grid.band_at(Vec2::new(p.x, p.z)),
+            _ => None,
+        };
+        let jitter = match banded {
+            Some(band) => [1.12, 0.9][band as usize] * (0.97 + 0.06 * hash01(cube)),
+            None => 0.9 + 0.2 * hash01(cube),
+        };
         // Painted as its texture would paint it: its average colour under
         // the ground's tint.
         let paint = grid.paints[match ground {
@@ -1139,7 +1200,7 @@ impl Terrain {
         style: Option<Realm>,
     ) -> Builder {
         let mut builder = Builder::default();
-        let mut quad = |corners: [Vec3; 4], normal: Vec3, color: [f32; 4]| {
+        let mut quad = |corners: [Vec3; 4], normal: Vec3, colors: [[f32; 4]; 4]| {
             let [a, b, c, _] = corners;
             let order: [usize; 6] = if (b - a).cross(c - a).dot(normal) >= 0.0 {
                 [0, 1, 2, 2, 1, 3]
@@ -1147,8 +1208,12 @@ impl Terrain {
                 [0, 2, 1, 2, 3, 1]
             };
             for k in order {
-                builder.push(None, || (corners[k], normal, Vec2::ZERO, color));
+                builder.push(None, || (corners[k], normal, Vec2::ZERO, colors[k]));
             }
+        };
+        let times = |color: [f32; 4], light: f32| {
+            let [r, g, b, a] = color;
+            [r * light, g * light, b * light, a]
         };
         for i in 0..grid.across {
             let tile = grid.origin + Vec2::new(i as f32, row as f32) * grid.tile;
@@ -1170,7 +1235,7 @@ impl Terrain {
                             at(x1, z1, top),
                         ],
                         Vec3::Y,
-                        color,
+                        [color; 4],
                     );
                     // Its four sides: from where to where along each, and which
                     // way it faces.
@@ -1192,6 +1257,13 @@ impl Terrain {
                             if other >= top {
                                 continue;
                             }
+                            // Lit as a voxel world's sides are, whatever the
+                            // sun: each way darker than the tops, and darker
+                            // still towards its foot, where it meets the block
+                            // below (its ambient occlusion), so that every
+                            // step stands out.
+                            let face = side_light(facing);
+                            let (lit, foot) = (times(side, face), times(side, face * VOXEL_FOOT));
                             quad(
                                 [
                                     at(a.x, a.y, other),
@@ -1200,7 +1272,7 @@ impl Terrain {
                                     at(b.x, b.y, top),
                                 ],
                                 facing,
-                                side,
+                                [foot, lit, foot, lit],
                             );
                         }
                     }
@@ -1962,6 +2034,25 @@ fn locate(axis: &[f32], value: f32) -> (usize, f32) {
         - 1;
     (i, (value - axis[i]) / (axis[i + 1] - axis[i]))
 }
+
+/// How light the sides of the ground's blocks are, by the way they face,
+/// against their tops, as a voxel world shades them whatever the sun: the
+/// east and the south a little darker, the west and the north more.
+fn side_light(facing: Vec3) -> f32 {
+    if facing.x > 0.5 {
+        0.82
+    } else if facing.x < -0.5 {
+        0.62
+    } else if facing.z > 0.5 {
+        0.74
+    } else {
+        0.56
+    }
+}
+
+/// How light the foot of a block's side is against its top edge (see
+/// [`side_light`]): its ambient occlusion.
+const VOXEL_FOOT: f32 = 0.5;
 
 /// A number from 0 to 1 for a block, the same for it every time.
 fn hash01(cube: IVec3) -> f32 {

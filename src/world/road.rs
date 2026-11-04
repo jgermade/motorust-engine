@@ -17,6 +17,41 @@ use crate::track::{CURB_WIDTH, SURFACE_Y, Track};
 
 /// Tamaño (m) que cubre cada repetición de la textura del asfalto.
 const ASPHALT_TILE: f32 = 7.0;
+/// On a circuit drawn as voxels (see [`Scenery::look`]), the road is drawn
+/// as the arcade racers of the 8 and 16 bits drew theirs: in flat colours,
+/// in bands across it this long (m) of two shades, one after the other, its
+/// curbs striped and its walls banded in step with them, and the grass beside
+/// it too (see [`super::terrain`]). The bands are the road's own: they go by
+/// with it.
+pub const ARCADE_BAND: f32 = 6.0;
+/// The two greys of the arcade road's bands (sRGB).
+const ARCADE_ASPHALT: [Color; 2] = [Color::srgb(0.34, 0.34, 0.37), Color::srgb(0.41, 0.41, 0.44)];
+/// How far below the road an arcade road's walls reach down (m): to the
+/// ground in blocks, which lies up to a block or two under the smooth ground.
+const ARCADE_FOOTING: f32 = 6.0;
+
+/// Which of the two shades of the arcade road's bands is at `along` metres
+/// along a road: 0 or 1.
+pub fn arcade_band(along: f32) -> usize {
+    (along / ARCADE_BAND).floor().rem_euclid(2.0) as usize
+}
+
+/// The colour of an arcade road's wall of `style` in band `band`, `up`
+/// metres from the road: two shades of it, one band after the other, a
+/// lighter coping on the stone; `None` for those drawn as they always are.
+fn arcade_wall_color(style: WallStyle, band: usize, up: f32) -> Option<Color> {
+    let shade = [1.0, 0.86][band];
+    let color = match style {
+        WallStyle::Stone if up > 0.91 => Color::srgb(0.93, 0.84, 0.68),
+        WallStyle::Stone => Color::srgb(0.78, 0.64, 0.47),
+        WallStyle::Concrete | WallStyle::Parapet => Color::srgb(0.93, 0.93, 0.92),
+        WallStyle::Hedge => Color::srgb(0.25, 0.55, 0.22),
+        WallStyle::Timber => Color::srgb(0.6, 0.42, 0.26),
+        _ => return None,
+    };
+    let c = color.to_srgba();
+    Some(Color::srgb(c.red * shade, c.green * shade, c.blue * shade))
+}
 const LINE_WIDTH: f32 = 0.25;
 /// Distancia del borde del asfalto a la línea blanca lateral.
 const EDGE_LINE_INSET: f32 = 0.45;
@@ -280,8 +315,22 @@ fn spawn_surface(
     // The asphalt, except where it lies under the lap's.
     let covered = |corners: [Vec2; 4]| corners.iter().all(|&p| road.on_other_asphalt(p));
     let indoors = scenery.soil == Soil::Floor;
+    let arcade = scenery.look.voxel_size().is_some() && !indoors;
     if indoors {
         spawn_toy_tracks(spawn, road, scenery, textures);
+    } else if arcade {
+        // Flat, in bands of two greys.
+        spawn(
+            ribbon(road, -half, half, 0.0, ASPHALT_TILE, |index, corners| {
+                ((road.number == 0 || !covered(corners)) && !planked(index))
+                    .then(|| ARCADE_ASPHALT[arcade_band(index as f32 * line.step_length())])
+            }),
+            StandardMaterial {
+                perceptual_roughness: 0.9,
+                reflectance: 0.3,
+                ..default()
+            },
+        );
     } else {
         spawn(
             ribbon(road, -half, half, 0.0, ASPHALT_TILE, |index, corners| {
@@ -329,13 +378,18 @@ fn spawn_surface(
         painted(),
     );
     // Indoors, kerbs only on a slot-car track, as its red and white ones.
+    // On an arcade road, curbs all the way round, striped band by band.
     let curbs = |index: usize, corners| {
         let toy = indoors.then(|| road.toy_track(scenery, index));
-        (has_curbs(road, index)
+        let stripe = match arcade {
+            true => arcade_band(index as f32 * line.step_length()),
+            false => index % 2,
+        };
+        ((arcade || has_curbs(road, index))
             && clear(corners)
             && !planked(index)
             && toy.is_none_or(|style| style == BridgeStyle::SlotTrack))
-        .then_some(scenery.curbs[index % 2])
+        .then_some(scenery.curbs[stripe])
     };
     spawn(
         ribbon(road, half, half + CURB_WIDTH, 0.0, 1.0, curbs),
@@ -436,9 +490,18 @@ fn spawn_surface(
             },
         ),
     ] {
-        let mesh = walls(road, terrain, wanted, |index, side| {
+        let banded = arcade && arcade_wall_color(wanted, 0, 0.0).is_some();
+        let mesh = walls(road, terrain, wanted, banded, |index, side| {
             style(index, side) == Some(wanted)
         });
+        // Banded on an arcade road, in their colours alone.
+        let material = match banded {
+            true => StandardMaterial {
+                perceptual_roughness: 0.9,
+                ..default()
+            },
+            false => material,
+        };
         if let Some(mesh) = mesh {
             spawn(mesh, material);
         }
@@ -913,6 +976,7 @@ fn walls(
     road: Road,
     terrain: &Terrain,
     style: WallStyle,
+    banded: bool,
     wanted: impl Fn(usize, Side) -> bool,
 ) -> Option<Mesh> {
     let line = road.line();
@@ -980,6 +1044,11 @@ fn walls(
             (base, out)
         };
         let at = |i: usize, p: Vec2| {
+            // On an arcade road, its foot reaches down to the blocks.
+            let p = match banded && p.y <= -WALL_FOOTING {
+                true => Vec2::new(p.x, -ARCADE_FOOTING),
+                false => p,
+            };
             let (base, _) = frame(i);
             let ground = line.offset_point(i, inner(i) + side * p.x);
             let mut position = Vec3::new(ground.x, base + p.y, ground.y);
@@ -1021,7 +1090,15 @@ fn walls(
                     // Shaded smoothly round the profile.
                     let normal = direction(i, point_normal(k));
                     let uv = Vec2::new(u, around[k] / profile.tile.y);
-                    mesh.push(position, normal, uv, wall_tint(style, position, p.y));
+                    let tint = match banded {
+                        // The band of the stretch it starts, so each stretch
+                        // is of one colour (its corners at the band's start
+                        // shared with the stretch before).
+                        true => arcade_wall_color(style, arcade_band(i as f32 * step), p.y)
+                            .unwrap_or(Color::WHITE),
+                        false => wall_tint(style, position, p.y),
+                    };
+                    mesh.push(position, normal, uv, tint);
                 }
             }
             let corner = |i: usize, k: usize| first + ((i - start) * points + k) as u32;
@@ -1642,7 +1719,7 @@ pub mod tests {
             number: 0,
         };
         for style in [WallStyle::Stone, WallStyle::Concrete, WallStyle::Hedge] {
-            let mesh = walls(road, &terrain, style, |index, _| index < 40)
+            let mesh = walls(road, &terrain, style, false, |index, _| index < 40)
                 .expect("there are walls at the start");
             let positions = mesh
                 .attribute(Mesh::ATTRIBUTE_POSITION)

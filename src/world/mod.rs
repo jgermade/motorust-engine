@@ -396,13 +396,18 @@ fn prepare_rest(basis: &Basis, textures: &textures::WorldTextures, urgency: Urge
             urgency.threads(),
         )
     });
-    let grass = tufts::tuft_pieces(
-        track,
-        terrain,
-        &basis.roadside.shoulders,
-        &basis.roadside.edges,
-        textures,
-    );
+    // On a circuit drawn as voxels, no tufts nor ragged edge of grass by the
+    // road: its grass is the blocks', banded as an arcade racer's.
+    let grass = match scenery.look.voxel_size() {
+        Some(_) => Vec::new(),
+        None => tufts::tuft_pieces(
+            track,
+            terrain,
+            &basis.roadside.shoulders,
+            &basis.roadside.edges,
+            textures,
+        ),
+    };
     Rest {
         sea_mirror,
         grass,

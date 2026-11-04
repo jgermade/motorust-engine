@@ -108,7 +108,7 @@ pub fn spawn_props(
         occupied.push((house.position, house.width.max(house.depth)));
     }
     for row in scenery.palms {
-        occupied.extend(spawn_palms(world, track, terrain, row, assets));
+        occupied.extend(spawn_palms(world, track, terrain, scenery, row, assets));
     }
     occupied.extend(landmarks::spawn_ridden_loops(
         world,
@@ -1251,6 +1251,7 @@ fn spawn_palms(
     world: &mut ChildSpawnerCommands,
     track: &Track,
     terrain: &Terrain,
+    scenery: &Scenery,
     row: &Row,
     assets: &mut Assets3d,
 ) -> Vec<Footprint> {
@@ -1261,6 +1262,25 @@ fn spawn_palms(
         cull_mode: None,
         ..default()
     });
+    // On a circuit drawn as voxels, each variant photographed as a sprite
+    // of pixel art (see [`super::sprites`]), planted flat, facing the camera.
+    let cards: Option<Vec<(Handle<Mesh>, Handle<StandardMaterial>)>> =
+        scenery.look.voxel_size().map(|size| {
+            (0..VARIANTS)
+                .filter_map(|variant| {
+                    let photo = super::sprites::photograph(
+                        &palm_mesh(variant),
+                        size / SPRITE_PIXELS,
+                        scenery.look.voxel_shades(),
+                    )?;
+                    let image = assets.images.add(photo.image);
+                    Some((
+                        assets.meshes.add(super::sprites::card(photo.size)),
+                        assets.materials.add(super::sprites::card_material(image)),
+                    ))
+                })
+                .collect()
+        });
     let models: Vec<Handle<Mesh>> = (0..VARIANTS)
         .map(|variant| assets.meshes.add(palm_mesh(variant)))
         .collect();
@@ -1268,6 +1288,21 @@ fn spawn_palms(
     for (k, (_, point)) in row_points(track, row).into_iter().enumerate() {
         let random = |n: u32| random01(k as u32 * 8 + n + 70_000 + row.lateral as u32);
         if terrain.height(point) < terrain.water_level(point) + 1.0 {
+            continue;
+        }
+        if let Some((mesh, material)) = cards
+            .as_ref()
+            .and_then(|cards| cards.get(k % cards.len().max(1)))
+        {
+            world.spawn((
+                super::sprites::FacingCamera,
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                Transform::from_xyz(point.x, terrain.height(point) - 0.2, point.y)
+                    .with_scale(Vec3::splat(0.85 + 0.35 * random(1))),
+                bevy::light::NotShadowCaster,
+            ));
+            taken.push((point, 3.0));
             continue;
         }
         world.spawn((
