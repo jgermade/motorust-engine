@@ -367,8 +367,9 @@ impl Palette {
             // magenta clouds; colours a little more saturated and contrasted;
             // the sun's light laid on the water in a broad column.
             SkyStyle::Synthwave => Self {
-                zenith: Color::srgb(0.09, 0.03, 0.28),
-                above_horizon: Color::srgb(0.62, 0.12, 0.5),
+                // Soft: a dusky lavender overhead, mauve lower down.
+                zenith: Color::srgb(0.27, 0.21, 0.47),
+                above_horizon: Color::srgb(0.8, 0.4, 0.6),
                 horizon: Color::srgb(0.92, 0.32, 0.52),
                 glow: 0.8,
                 glow_color: Color::srgb(1.0, 0.78, 0.4),

@@ -20,7 +20,9 @@ use super::sky::MEDITERRANEAN_SUN;
 use super::structures::{TUNNEL_SHELL, Tunnels};
 use super::textures::WorldTextures;
 use crate::geometry::{fbm, smoothstep, value_noise};
-use crate::track::{BASE_ELEVATION, Nearest, Track, WALL_DISTANCE, closed_curve};
+use crate::track::{
+    BASE_ELEVATION, CURB_WIDTH, Nearest, SURFACE_Y, Track, WALL_DISTANCE, closed_curve,
+};
 
 pub const SEA_LEVEL: f32 = -1.0;
 /// Hasta esta distancia de la línea central, el terreno es la prolongación de
@@ -197,7 +199,39 @@ pub struct VoxelGrid {
     /// grid is beside, by rows: the grass there is banded in step with the
     /// road's (0 or 1; [`NO_BAND`] further off).
     bands: Vec<u8>,
+    /// The flat verges beside the roads, out from their curbs.
+    verges: Vec<Verge>,
 }
+
+/// A piece of the verge beside a road drawn as voxels: the road's surface
+/// carried on flat past its curbs as far as the ground is the road's own
+/// ([`FLAT`]), in the bands of two greens of the grass beside it, in step
+/// with the road's and its curbs', with no step in it where the road climbs
+/// (blocks there would rise beside it in stairs); a strip a road's segment
+/// long and [`VERGE_STRIP`] across.
+#[derive(Clone, Debug)]
+struct Verge {
+    /// Its corners: two on its side towards the road, along it, then the
+    /// two across from them.
+    corners: [Vec3; 4],
+    /// The point of the road's middle it is beside, whose grass it is the
+    /// colour of: all across the verge, one colour in each band.
+    beside: Vec3,
+    /// Which band of the road's it is in (see [`super::road::arcade_band`]).
+    band: u8,
+    /// On the strip furthest out, which way its outer edge faces, where the
+    /// verge drops sheer down to the blocks.
+    edge: Option<Vec3>,
+}
+
+/// How wide each strip of a verge is, at most (m).
+const VERGE_STRIP: f32 = 1.0;
+/// How far below the road's surface (over the ground) a verge lies, under
+/// its curbs (m).
+const VERGE_UNDER: f32 = 0.01;
+/// How far down a verge's outer edge drops (m): to the blocks beside it,
+/// which lie at most a block or two lower where the ground falls away.
+const VERGE_DROP: f32 = 3.0;
 
 /// How far from a road's middle (m) the grass beside it is banded in step
 /// with the arcade road's (see [`VoxelGrid::bands`]).
@@ -207,7 +241,13 @@ const NO_BAND: u8 = u8::MAX;
 
 impl VoxelGrid {
     /// The blocks over `fine` (its corners) round `track`'s roads.
-    pub fn new(track: &Track, fine: (Vec2, Vec2), size: f32, shades: Option<u32>) -> Self {
+    pub fn new(
+        track: &Track,
+        scenery: &Scenery,
+        fine: (Vec2, Vec2),
+        size: f32,
+        shades: Option<u32>,
+    ) -> Self {
         let tile = TILE_BLOCKS * size;
         let origin = (fine.0 / tile).floor() * tile;
         let end = (fine.1 / tile).ceil() * tile;
@@ -289,7 +329,24 @@ impl VoxelGrid {
             shades,
             paints: [Vec3::ONE; 4],
             bands,
+            verges: verges(track, scenery),
         }
+    }
+
+    /// `color` times `light`, its red, green and blue cut to the grid's
+    /// shades (in sRGB).
+    fn cut(&self, color: [f32; 4], light: f32) -> [f32; 4] {
+        let [r, g, b, a] = color;
+        let rgb = Vec3::new(r, g, b) * light;
+        let rgb = match self.shades {
+            Some(shades) => {
+                let steps = (shades - 1) as f32;
+                let srgb = rgb.clamp(Vec3::ZERO, Vec3::ONE).powf(1.0 / 2.2);
+                ((srgb * steps).round() / steps).powf(2.2)
+            }
+            None => rgb,
+        };
+        [rgb.x, rgb.y, rgb.z, a]
     }
 
     /// Which band of the arcade road's the ground at `point` is beside, if
@@ -465,10 +522,9 @@ impl Terrain {
             grass_shade: scenery.grass_shade,
             lakes: shaper.dams,
             sculpt: scenery.sculpt,
-            voxel: scenery
-                .look
-                .voxel_size()
-                .map(|size| VoxelGrid::new(track, fine, size, scenery.look.voxel_shades())),
+            voxel: scenery.look.voxel_size().map(|size| {
+                VoxelGrid::new(track, scenery, fine, size, scenery.look.voxel_shades())
+            }),
         }
     }
 
@@ -1062,6 +1118,10 @@ impl Terrain {
                 plain: true,
                 ..ground(Ground::Grass, None, blocks.build(1.0))
             });
+            meshes.push(GroundMesh {
+                plain: true,
+                ..ground(Ground::Grass, None, self.verge_mesh(grid).build(1.0))
+            });
         }
         meshes
     }
@@ -1153,7 +1213,7 @@ impl Terrain {
             _ => None,
         };
         let jitter = match banded {
-            Some(band) => [1.12, 0.9][band as usize] * (0.97 + 0.06 * hash01(cube)),
+            Some(band) => ARCADE_GREENS[band as usize] * (0.97 + 0.06 * hash01(cube)),
             None => 0.9 + 0.2 * hash01(cube),
         };
         // Painted as its texture would paint it: its average colour under
@@ -1168,23 +1228,53 @@ impl Terrain {
         let color = [r * paint.x, g * paint.y, b * paint.z, a];
         let side = match ground {
             // Earth under the grass.
-            Ground::Grass => [0.16, 0.09, 0.05, 1.0],
+            Ground::Grass => VOXEL_EARTH,
             _ => color.map(|c| c * 0.78),
         };
-        let cut = |color: [f32; 4], light: f32| {
-            let [r, g, b, a] = color;
-            let rgb = Vec3::new(r, g, b) * light;
-            let rgb = match grid.shades {
-                Some(shades) => {
-                    let steps = (shades - 1) as f32;
-                    let srgb = rgb.clamp(Vec3::ZERO, Vec3::ONE).powf(1.0 / 2.2);
-                    ((srgb * steps).round() / steps).powf(2.2)
-                }
-                None => rgb,
-            };
-            [rgb.x, rgb.y, rgb.z, a]
-        };
-        (cut(color, jitter), cut(side, jitter))
+        let cut = |color| grid.cut(color, jitter);
+        (cut(color), cut(side))
+    }
+
+    /// The colours of a verge's piece (see [`Verge`]) beside `p` on the
+    /// road: on top, the grass of the blocks beside the road in its band, but
+    /// level, never weathered and of one shade, so that the bands go by
+    /// unbroken; and the earth of their sides, on its edge.
+    fn verge_colors(&self, grid: &VoxelGrid, p: Vec3, band: u8) -> ([f32; 4], [f32; 4]) {
+        let [r, g, b, a] = shaded(self.grass_tint(p, Vec3::Y, 0.0), self.grass_shade);
+        let paint = grid.paints[0];
+        let color = [r * paint.x, g * paint.y, b * paint.z, a];
+        let light = ARCADE_GREENS[band as usize];
+        (grid.cut(color, light), grid.cut(VOXEL_EARTH, light))
+    }
+
+    /// The verges beside the roads (see [`Verge`]), with the sheer drop of
+    /// their outer edges.
+    fn verge_mesh(&self, grid: &VoxelGrid) -> Builder {
+        let mut builder = Builder::default();
+        for verge in &grid.verges {
+            let (top, side) = self.verge_colors(grid, verge.beside, verge.band);
+            voxel_quad(&mut builder, verge.corners, Vec3::Y, [top; 4]);
+            if let Some(facing) = verge.edge {
+                let (a, b) = (verge.corners[2], verge.corners[3]);
+                let drop = Vec3::Y * VERGE_DROP;
+                // Lit as the blocks' sides facing most nearly its way.
+                let axis = match facing.x.abs() > facing.z.abs() {
+                    true => Vec3::X * facing.x.signum(),
+                    false => Vec3::Z * facing.z.signum(),
+                };
+                let face = side_light(axis);
+                let [red, green, blue, alpha] = side;
+                let times = |light: f32| [red * light, green * light, blue * light, alpha];
+                let (lit, foot) = (times(face), times(face * VOXEL_FOOT));
+                voxel_quad(
+                    &mut builder,
+                    [a - drop, a, b - drop, b],
+                    facing,
+                    [foot, lit, foot, lit],
+                );
+            }
+        }
+        builder
     }
 
     /// The blocks of row `row` of the grid's tiles: each column's top, and
@@ -1201,15 +1291,7 @@ impl Terrain {
     ) -> Builder {
         let mut builder = Builder::default();
         let mut quad = |corners: [Vec3; 4], normal: Vec3, colors: [[f32; 4]; 4]| {
-            let [a, b, c, _] = corners;
-            let order: [usize; 6] = if (b - a).cross(c - a).dot(normal) >= 0.0 {
-                [0, 1, 2, 2, 1, 3]
-            } else {
-                [0, 2, 1, 2, 3, 1]
-            };
-            for k in order {
-                builder.push(None, || (corners[k], normal, Vec2::ZERO, colors[k]));
-            }
+            voxel_quad(&mut builder, corners, normal, colors);
         };
         let times = |color: [f32; 4], light: f32| {
             let [r, g, b, a] = color;
@@ -2035,6 +2117,79 @@ fn locate(axis: &[f32], value: f32) -> (usize, f32) {
     (i, (value - axis[i]) / (axis[i + 1] - axis[i]))
 }
 
+/// The verges beside every road of `track` (see [`Verge`]): on both sides of
+/// each, out from its curbs to [`FLAT`], but not on the lap's bridges and in
+/// its tunnels, which have decks and walkways there, nor where another road
+/// (or another stretch of the same one) is nearer.
+fn verges(track: &Track, scenery: &Scenery) -> Vec<Verge> {
+    let lap = track.lap_length();
+    let mut verges = Vec::new();
+    for number in 0..=track.side_roads().len() {
+        let road = track.road(number);
+        let (count, step) = (road.sample_count(), road.step_length());
+        let inner = road.half_width() + CURB_WIDTH;
+        if inner >= FLAT {
+            continue;
+        }
+        let strips = ((FLAT - inner) / VERGE_STRIP).ceil() as usize;
+        let lateral = |k: usize| inner + (FLAT - inner) * k as f32 / strips as f32;
+        let at = |index: usize, lateral: f32| {
+            track.surface_point_on(number, index, lateral) + Vec3::Y * (SURFACE_Y - VERGE_UNDER)
+        };
+        // Whether the road nearest `point` (at its level) is this stretch of
+        // this one, `index` of it, and is so at least `within` m off.
+        let own = |point: Vec3, index: usize, within: f32| {
+            let nearest = track.nearest_at(Vec2::new(point.x, point.z), point.y);
+            let apart = nearest.index.abs_diff(index);
+            let apart = match road.is_closed() {
+                true => apart.min(count - apart),
+                false => apart,
+            };
+            (nearest.road == number && apart as f32 * step <= 2.0 * FLAT)
+                || nearest.distance >= within
+        };
+        for index in 0..road.segment_count() {
+            let along = road.lap_along_at(index);
+            let covered = number == 0
+                && scenery
+                    .tunnels
+                    .iter()
+                    .chain(scenery.bridges.iter().map(|bridge| &bridge.span))
+                    .any(|span| span.contains(along, lap));
+            if covered {
+                continue;
+            }
+            let band = super::road::arcade_band(index as f32 * step) as u8;
+            let next = (index + 1) % count;
+            for side in [1.0, -1.0] {
+                for k in 0..strips {
+                    let (a, b) = (side * lateral(k), side * lateral(k + 1));
+                    let corners = [at(index, a), at(next, a), at(index, b), at(next, b)];
+                    let middle = corners.iter().sum::<Vec3>() / 4.0;
+                    // The nearest road at its middle this one, and none's
+                    // asphalt under its corners.
+                    let clear = own(middle, index, f32::INFINITY)
+                        && corners.iter().all(|&corner| own(corner, index, inner));
+                    if !clear {
+                        continue;
+                    }
+                    let edge = (k + 1 == strips).then(|| {
+                        let out = (corners[2] - corners[0]) * Vec3::new(1.0, 0.0, 1.0);
+                        out.normalize_or_zero()
+                    });
+                    verges.push(Verge {
+                        corners,
+                        beside: at(index, 0.0),
+                        band,
+                        edge,
+                    });
+                }
+            }
+        }
+    }
+    verges
+}
+
 /// How light the sides of the ground's blocks are, by the way they face,
 /// against their tops, as a voxel world shades them whatever the sun: the
 /// east and the south a little darker, the west and the north more.
@@ -2047,6 +2202,28 @@ fn side_light(facing: Vec3) -> f32 {
         0.74
     } else {
         0.56
+    }
+}
+
+/// How much lighter and darker the grass beside an arcade road is in its two
+/// bands (see [`VoxelGrid::bands`]): far enough apart to tell them apart as
+/// the curbs' stripes go by, cut to a few shades.
+const ARCADE_GREENS: [f32; 2] = [1.22, 0.8];
+
+/// The earth of the sides of the blocks of grass (linear).
+const VOXEL_EARTH: [f32; 4] = [0.16, 0.09, 0.05, 1.0];
+
+/// A quad of the blocks: `corners` two along one edge, then the two across
+/// from them, facing `normal`, each corner its colour.
+fn voxel_quad(builder: &mut Builder, corners: [Vec3; 4], normal: Vec3, colors: [[f32; 4]; 4]) {
+    let [a, b, c, _] = corners;
+    let order: [usize; 6] = if (b - a).cross(c - a).dot(normal) >= 0.0 {
+        [0, 1, 2, 2, 1, 3]
+    } else {
+        [0, 2, 1, 2, 3, 1]
+    };
+    for k in order {
+        builder.push(None, || (corners[k], normal, Vec2::ZERO, colors[k]));
     }
 }
 
@@ -3401,7 +3578,14 @@ pub mod tests {
     /// The demo circuit's ground as voxels, `size` metres at their smallest.
     fn bay_in_blocks(size: f32) -> (Track, Terrain) {
         let (track, mut terrain) = bay();
-        terrain.voxel = Some(VoxelGrid::new(&track, terrain.fine, size, Some(12)));
+        let scenery = &crate::testing::demo_circuit().scenery;
+        terrain.voxel = Some(VoxelGrid::new(
+            &track,
+            scenery,
+            terrain.fine,
+            size,
+            Some(12),
+        ));
         (track, terrain)
     }
 
@@ -3438,7 +3622,8 @@ pub mod tests {
             other => panic!("{other:?}"),
         };
         let plain: Vec<&GroundMesh> = meshes.iter().filter(|mesh| mesh.plain).collect();
-        assert_eq!(plain.len(), 1);
+        // The blocks, then the verges.
+        assert_eq!(plain.len(), 2);
         let blocks = &plain[0].mesh;
         let positions = attribute(blocks, Mesh::ATTRIBUTE_POSITION);
         let normals = attribute(blocks, Mesh::ATTRIBUTE_NORMAL);
@@ -3475,5 +3660,48 @@ pub mod tests {
                 .all(|p| Vec2::new(p.x, p.z).distance(middle) > 2.0 * grid.tile),
             "smooth ground under the blocks"
         );
+    }
+
+    #[test]
+    fn as_voxels_the_verges_carry_the_road_on_flat_in_its_bands_with_no_steps() {
+        let (track, terrain) = bay_in_blocks(1.0);
+        let grid = terrain.voxel.as_ref().unwrap();
+        assert!(!grid.verges.is_empty());
+        let inner = track.half_width() + CURB_WIDTH;
+        let mut bands = [0, 0];
+        for verge in &grid.verges {
+            bands[verge.band as usize] += 1;
+            for corner in verge.corners {
+                let at = Vec2::new(corner.x, corner.z);
+                let nearest = track.nearest_at(at, corner.y);
+                // Past the curbs and no further than the road's own ground.
+                assert!(
+                    (inner - 0.05..=FLAT + 0.05).contains(&nearest.distance),
+                    "{corner} at {} m",
+                    nearest.distance
+                );
+                // On the road's surface carried on, just under its curbs.
+                let surface = track.surface_point_on(nearest.road, nearest.index, nearest.lateral);
+                assert!((corner.y - surface.y).abs() < 0.6, "{corner} by {surface}");
+            }
+            // Along the road, each piece rises with it, never in a step.
+            let [a, b, ..] = verge.corners;
+            let slope = (b.y - a.y).abs() / Vec2::new(b.x - a.x, b.z - a.z).length();
+            assert!(slope < 0.3, "{slope}");
+        }
+        // Both bands, as many of one as of the other, or nearly.
+        let (fewer, more) = (bands[0].min(bands[1]), bands[0].max(bands[1]));
+        assert!(fewer * 10 > more * 9, "{bands:?}");
+        // Meshed, its top flat-lit as the blocks' tops, its edges dropping.
+        let meshes = terrain.meshes(4);
+        let verges = &meshes.iter().filter(|mesh| mesh.plain).nth(1).unwrap().mesh;
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)) =
+            verges.attribute(Mesh::ATTRIBUTE_NORMAL)
+        else {
+            panic!("no normals");
+        };
+        let tops = normals.iter().filter(|n| **n == [0.0, 1.0, 0.0]).count();
+        let edges = normals.iter().filter(|n| n[1] == 0.0).count();
+        assert!(tops > 0 && edges > 0 && tops + edges == normals.len());
     }
 }
