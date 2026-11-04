@@ -8,6 +8,7 @@ use bevy::window::PrimaryWindow;
 use crate::bike::curves::{
     CurveKind, CurveShape, KEYBOARD_MODES, KeyboardMode, KeyboardShapes, LEAN_LOOKS, LEARN_LINES,
 };
+use crate::circuits::Circuits;
 use crate::gamepads::{ActiveController, Gamepads};
 use crate::hud::UiFont;
 use crate::legend::{
@@ -28,6 +29,7 @@ use crate::settings::{
     SHADOW_QUALITIES, START_LIGHTS, ScreenRate, Settings, ShadowQuality, StartedWith, TRACK_VIEWS,
     WEB, cycle,
 };
+use crate::sound::music::{Jukebox, Songs, Tune, player_tunes};
 use crate::ui::{
     ActiveDevice, InputDevice, MenuInput, MenuSound, Row, UiIcons, current_active_device,
     text_font, ui_pixels,
@@ -173,6 +175,7 @@ impl Plugin for OptionsPlugin {
                     use_options_menu
                         .run_if(|menu: Res<OptionsMenu>| menu.is_open)
                         .in_set(OptionsInput),
+                    stop_the_player,
                     finish_pad_arts,
                     show_options_menu,
                     mark_controls_test,
@@ -183,6 +186,17 @@ impl Plugin for OptionsPlugin {
                 PostUpdate,
                 follow_the_chosen_option.after(UiSystems::Layout),
             );
+    }
+}
+
+/// The music player stops once its page is left (or the options closed).
+fn stop_the_player(menu: Res<OptionsMenu>, jukebox: Option<ResMut<Jukebox>>) {
+    let on_its_page = menu.is_open && menu.page == Some(Page::Player);
+    if let Some(mut jukebox) = jukebox
+        && !on_its_page
+        && jukebox.playing.is_some()
+    {
+        jukebox.playing = None;
     }
 }
 
@@ -296,6 +310,8 @@ pub enum Page {
     ControlAdvanced,
     PerformanceHud,
     Advanced,
+    /// Sound's music player: every song, played one at a time.
+    Player,
 }
 
 impl Page {
@@ -321,6 +337,9 @@ impl Page {
             Page::Advanced => graphics_items(None)
                 .iter()
                 .position(|&item| item == GraphicsItem::Advanced),
+            Page::Player => sound_items(None, 0)
+                .iter()
+                .position(|&item| item == SoundItem::Player),
         }
         .unwrap_or(0)
     }
@@ -335,6 +354,8 @@ impl Page {
             (Page::Advanced | Page::ControlAdvanced, Language::English) => "ADVANCED",
             (Page::PerformanceHud, Language::Spanish) => "HUD DE RENDIMIENTO",
             (Page::PerformanceHud, Language::English) => "PERFORMANCE HUD",
+            (Page::Player, Language::Spanish) => "REPRODUCTOR",
+            (Page::Player, Language::English) => "MUSIC PLAYER",
         }
     }
 }
@@ -476,6 +497,10 @@ enum SoundItem {
     FxVolume,
     MusicVolume,
     MusicEnabled,
+    /// The music player's page.
+    Player,
+    /// On the player's page, a song: its place in [`player_tunes`].
+    Tune(usize),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -583,6 +608,7 @@ fn starts_group(
             graphics_items(page).get(index),
             Some(GraphicsItem::ForcePerformance | GraphicsItem::PerformanceHud)
         ),
+        OptionsTab::Sound => sound_items(page, 0).get(index) == Some(&SoundItem::Player),
         _ => false,
     }
 }
@@ -602,8 +628,8 @@ fn shortcuts_after(tab: OptionsTab, page: Option<Page>, index: usize) -> bool {
 /// it is custom).
 fn control_items(page: Option<Page>, shapes: &KeyboardShapes) -> Vec<ControlItem> {
     match page {
-        // (Graphics' pages are not Control's.)
-        None | Some(Page::PerformanceHud | Page::Advanced) => vec![
+        // (Graphics' and Sound's pages are not Control's.)
+        None | Some(Page::PerformanceHud | Page::Advanced | Page::Player) => vec![
             ControlItem::Mapping,
             ControlItem::StickBehaviour,
             ControlItem::KeyboardBehaviour,
@@ -637,12 +663,18 @@ fn control_items(page: Option<Page>, shapes: &KeyboardShapes) -> Vec<ControlItem
     }
 }
 
-fn sound_items() -> Vec<SoundItem> {
-    vec![
-        SoundItem::FxVolume,
-        SoundItem::MusicVolume,
-        SoundItem::MusicEnabled,
-    ]
+/// Sound's options: the volumes, the music on or off and the music
+/// player's page; on that page, its `tunes` songs.
+fn sound_items(page: Option<Page>, tunes: usize) -> Vec<SoundItem> {
+    match page {
+        Some(Page::Player) => (0..tunes).map(SoundItem::Tune).collect(),
+        _ => vec![
+            SoundItem::FxVolume,
+            SoundItem::MusicVolume,
+            SoundItem::MusicEnabled,
+            SoundItem::Player,
+        ],
+    }
 }
 
 /// Graphics' options: the window and the frame rate, the performance
@@ -724,12 +756,17 @@ fn render_scale_name(percent: u32, window: Option<&Window>, native: NativeShare)
 }
 
 /// How many options `tab` (on `page` of its, if one is open) has, besides
-/// Reset and Back.
-fn options_count(tab: OptionsTab, page: Option<Page>, shapes: &KeyboardShapes) -> usize {
+/// Reset and Back; the music player's page, its `tunes` songs.
+fn options_count(
+    tab: OptionsTab,
+    page: Option<Page>,
+    shapes: &KeyboardShapes,
+    tunes: usize,
+) -> usize {
     match tab {
         OptionsTab::Game => game_items().len(),
         OptionsTab::Control => control_items(page, shapes).len(),
-        OptionsTab::Sound => sound_items().len(),
+        OptionsTab::Sound => sound_items(page, tunes).len(),
         OptionsTab::Graphics => graphics_items(page).len(),
     }
 }
@@ -741,8 +778,13 @@ const FOOTER: usize = 2;
 
 /// How many options `tab` (on `page`) has, Reset and Back at its foot
 /// included.
-fn tab_items_count(tab: OptionsTab, page: Option<Page>, shapes: &KeyboardShapes) -> usize {
-    options_count(tab, page, shapes) + FOOTER
+fn tab_items_count(
+    tab: OptionsTab,
+    page: Option<Page>,
+    shapes: &KeyboardShapes,
+    tunes: usize,
+) -> usize {
+    options_count(tab, page, shapes, tunes) + FOOTER
 }
 
 /// The settings as they are at first.
@@ -937,6 +979,8 @@ fn section_is_default(
         (OptionsTab::Graphics, Some(Page::PerformanceHud)) => {
             return performance_hud(settings) == performance_hud(first);
         }
+        // The music player has nothing to put back.
+        (_, Some(Page::Player)) => return true,
         _ => {}
     }
     match tab {
@@ -1051,6 +1095,7 @@ fn reset_section(
             reset_performance_hud(settings, first);
             return;
         }
+        (_, Some(Page::Player)) => return,
         _ => {}
     }
     match tab {
@@ -1118,6 +1163,19 @@ fn reset_performance_hud(settings: &mut Settings, first: &Settings) {
     settings.show_keyboard_curves = first.show_keyboard_curves;
 }
 
+/// The music player's songs (the tracks' and the others), and what it
+/// plays: to change it, and to show it.
+type PlayerMut<'w> = (
+    Option<Res<'w, Circuits>>,
+    Option<Res<'w, Songs>>,
+    Option<ResMut<'w, Jukebox>>,
+);
+type Player<'w> = (
+    Option<Res<'w, Circuits>>,
+    Option<Res<'w, Songs>>,
+    Option<Res<'w, Jukebox>>,
+);
+
 #[allow(clippy::too_many_arguments)]
 fn use_options_menu(
     mut input: MenuInput,
@@ -1130,7 +1188,12 @@ fn use_options_menu(
     active_controller: Option<Res<ActiveController>>,
     two_samples: Option<Res<TwoSamples>>,
     mut sounds: MessageWriter<MenuSound>,
+    (circuits, songs, mut jukebox): PlayerMut,
 ) {
+    let tunes = match (circuits.as_deref(), songs.as_deref()) {
+        (Some(circuits), Some(songs)) => player_tunes(circuits, songs),
+        _ => Vec::new(),
+    };
     let request = input.read();
     let now = time.elapsed_secs();
 
@@ -1202,7 +1265,12 @@ fn use_options_menu(
 
     // Up and down through the row of sections and the options; across on
     // the row of sections, another section.
-    let count = tab_items_count(options_menu.tab, page, shapes_of(&settings, page));
+    let count = tab_items_count(
+        options_menu.tab,
+        page,
+        shapes_of(&settings, page),
+        tunes.len(),
+    );
     let on_tabs = options_menu.on_tabs;
     if options_menu.navigate(request.step, request.side, request.confirm, count) {
         sounds.write(MenuSound::Move);
@@ -1390,9 +1458,28 @@ fn use_options_menu(
             }
         }
         OptionsTab::Sound => {
-            let items = sound_items();
-            let item = items[options_menu.selected.min(items.len() - 1)];
+            let items = sound_items(page, tunes.len());
+            let Some(&item) = items.get(options_menu.selected.min(items.len().saturating_sub(1)))
+            else {
+                return;
+            };
             match item {
+                // A page of its own, from its first option.
+                SoundItem::Player if request.confirm || request.side > 0 => {
+                    options_menu.page = Some(Page::Player);
+                    options_menu.selected = 0;
+                    sounds.write(MenuSound::Confirm);
+                }
+                // A song played, or, playing, stopped.
+                SoundItem::Tune(at) if request.confirm => {
+                    if let (Some(jukebox), Some(&tune)) = (jukebox.as_deref_mut(), tunes.get(at)) {
+                        jukebox.playing = match jukebox.playing == Some(tune) {
+                            true => None,
+                            false => Some(tune),
+                        };
+                        sounds.write(MenuSound::Confirm);
+                    }
+                }
                 SoundItem::FxVolume if request.side != 0 => {
                     let next = (settings.fx_volume as i32 + request.side * 10).clamp(0, 100);
                     settings.fx_volume = next as u32;
@@ -1742,6 +1829,56 @@ fn spawn_check(
         });
 }
 
+/// Sound's rows (on `page`, if one is open): the volumes, the music on or
+/// off and the music player's page; on that page, each of `tunes` (with its
+/// title and what it is played for), the one `playing` in amber.
+fn sound_rows(
+    page: Option<Page>,
+    tunes: &[(Tune, String, &str)],
+    playing: Option<Tune>,
+    settings: &Settings,
+    lang: Language,
+) -> Vec<Row> {
+    sound_items(page, tunes.len())
+        .into_iter()
+        .map(|item| match item {
+            SoundItem::FxVolume => Row::with_value(
+                lang.sound_fx_volume(),
+                format!("<  {}%  >", settings.fx_volume),
+            ),
+            SoundItem::MusicVolume => Row::with_value(
+                lang.sound_music_volume(),
+                format!("<  {}%  >", settings.music_volume),
+            ),
+            SoundItem::MusicEnabled => Row::with_value(
+                lang.sound_music(),
+                if settings.music_enabled {
+                    format!("<  {}  >", lang.enabled())
+                } else {
+                    format!("<  {}  >", lang.disabled())
+                },
+            ),
+            SoundItem::Player => Row::with_value(
+                match lang {
+                    Language::Spanish => "Reproductor de música",
+                    Language::English => "Music player",
+                },
+                ">",
+            ),
+            SoundItem::Tune(at) => {
+                let (tune, title, played_for) = &tunes[at];
+                let on = playing == Some(*tune);
+                let value = match (on, lang) {
+                    (true, Language::Spanish) => format!("{played_for}  ·  sonando"),
+                    (true, Language::English) => format!("{played_for}  ·  playing"),
+                    (false, _) => played_for.to_string(),
+                };
+                Row::with_value(title.clone(), value).automatic(on)
+            }
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn show_options_menu(
     mut commands: Commands,
@@ -1754,7 +1891,8 @@ fn show_options_menu(
     font: Res<UiFont>,
     icons: Res<UiIcons>,
     shown: Query<Entity, With<OptionsModal>>,
-    time: Res<Time<Real>>,
+    // The time, and the music player's songs and what it plays.
+    (time, (circuits, songs, jukebox)): (Res<Time<Real>>, Player),
     started: Option<Res<StartedWith>>,
     // The keys and buttons held, and the gamepads' names (for the mapping).
     (keyboard, gamepads, names): (
@@ -2054,27 +2192,23 @@ fn show_options_menu(
                 })
                 .collect()
         }
-        OptionsTab::Sound => sound_items()
-            .into_iter()
-            .map(|item| match item {
-                SoundItem::FxVolume => Row::with_value(
-                    lang.sound_fx_volume(),
-                    format!("<  {}%  >", settings.fx_volume),
-                ),
-                SoundItem::MusicVolume => Row::with_value(
-                    lang.sound_music_volume(),
-                    format!("<  {}%  >", settings.music_volume),
-                ),
-                SoundItem::MusicEnabled => Row::with_value(
-                    lang.sound_music(),
-                    if settings.music_enabled {
-                        format!("<  {}  >", lang.enabled())
-                    } else {
-                        format!("<  {}  >", lang.disabled())
-                    },
-                ),
-            })
-            .collect(),
+        OptionsTab::Sound => {
+            let tunes = match (circuits.as_deref(), songs.as_deref()) {
+                (Some(circuits), Some(songs)) => player_tunes(circuits, songs)
+                    .into_iter()
+                    .map(|tune| {
+                        (
+                            tune,
+                            tune.title(circuits, songs),
+                            tune.played_for(circuits, lang),
+                        )
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let playing = jukebox.as_deref().and_then(|jukebox| jukebox.playing);
+            sound_rows(options_menu.page, &tunes, playing, &settings, lang)
+        }
         OptionsTab::Graphics => {
             // What the performance forced may lower by itself, in amber.
             let lowered = crate::world::detail::lowered(&settings);
@@ -3198,7 +3332,7 @@ mod tests {
     fn the_arrows_reach_the_row_of_sections_and_change_section_there() {
         let mut menu = OptionsMenu::default();
         menu.open(OptionsReturn::Welcome);
-        let count = tab_items_count(menu.tab, None, &KeyboardShapes::default());
+        let count = tab_items_count(menu.tab, None, &KeyboardShapes::default(), 0);
         // Up from the first option: the row of sections.
         assert!(menu.navigate(-1, 0, false, count));
         assert!(menu.on_tabs);
@@ -3210,7 +3344,7 @@ mod tests {
         assert_eq!(menu.tab, OptionsTab::Graphics);
         assert!(menu.on_tabs);
         // Down: its first option; up from the row: its last one.
-        let count = tab_items_count(menu.tab, None, &KeyboardShapes::default());
+        let count = tab_items_count(menu.tab, None, &KeyboardShapes::default(), 0);
         assert!(menu.navigate(1, 0, false, count));
         assert!(!menu.on_tabs);
         assert_eq!(menu.selected, 0);
@@ -3235,8 +3369,8 @@ mod tests {
         let mut menu = OptionsMenu::default();
         menu.open(OptionsReturn::Welcome);
         menu.tab = OptionsTab::Sound;
-        let count = tab_items_count(menu.tab, None, &KeyboardShapes::default());
-        assert_eq!(count, sound_items().len() + FOOTER);
+        let count = tab_items_count(menu.tab, None, &KeyboardShapes::default(), 0);
+        assert_eq!(count, sound_items(None, 0).len() + FOOTER);
         // Down from the last option: Back.
         menu.selected = count - FOOTER - 1;
         assert!(menu.navigate(1, 0, false, count));
@@ -3366,5 +3500,79 @@ mod tests {
         // Faint when it cannot be changed.
         let (frame, ..) = check_colors(true, false, true, accent);
         assert!(frame.alpha() < accent.alpha());
+    }
+
+    #[test]
+    fn sound_opens_the_music_player_which_plays_a_song_while_it_is_open() {
+        // Its page, from Sound's last option, a group of its own.
+        let items = sound_items(None, 5);
+        assert_eq!(items.last(), Some(&SoundItem::Player));
+        assert_eq!(Page::Player.row(), items.len() - 1);
+        assert!(starts_group(
+            OptionsTab::Sound,
+            None,
+            items.len() - 1,
+            &KeyboardShapes::default()
+        ));
+        // On it, a row for each song, and nothing to put back.
+        let page = Some(Page::Player);
+        assert_eq!(
+            sound_items(page, 3),
+            (0..3).map(SoundItem::Tune).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            tab_items_count(OptionsTab::Sound, page, &KeyboardShapes::default(), 3),
+            3 + FOOTER
+        );
+        let settings = Settings::default();
+        let debug = DebugOptions::default();
+        assert!(section_is_default(
+            OptionsTab::Sound,
+            page,
+            &settings,
+            &debug
+        ));
+        // Each song by its title and what it is played for, the one playing
+        // in amber.
+        let tunes = [
+            (Tune::Track(0), "Victory".to_string(), "Costa"),
+            (Tune::Loose(0), "Crown".to_string(), "Suelta"),
+        ];
+        let rows = sound_rows(
+            page,
+            &tunes,
+            Some(Tune::Loose(0)),
+            &settings,
+            Language::Spanish,
+        );
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].label, "Victory");
+        assert_eq!(rows[0].value.as_deref(), Some("Costa"));
+        assert!(!rows[0].automatic);
+        assert_eq!(rows[1].value.as_deref(), Some("Suelta  ·  sonando"));
+        assert!(rows[1].automatic);
+
+        // It stops once its page is left.
+        let mut app = App::new();
+        app.insert_resource(OptionsMenu {
+            is_open: true,
+            tab: OptionsTab::Sound,
+            page,
+            ..default()
+        })
+        .insert_resource(Jukebox {
+            playing: Some(Tune::Loose(0)),
+        })
+        .add_systems(Update, stop_the_player);
+        app.update();
+        assert_eq!(
+            app.world().resource::<Jukebox>().playing,
+            Some(Tune::Loose(0))
+        );
+        app.world_mut()
+            .resource_mut::<OptionsMenu>()
+            .leave_page(Page::Player);
+        app.update();
+        assert_eq!(app.world().resource::<Jukebox>().playing, None);
     }
 }

@@ -76,6 +76,9 @@ pub struct Song {
     /// null -` measures it. The game turns each song up or down by the
     /// difference, so they all sound equally loud.
     pub loudness: f32,
+    /// Its title, as the music player shows it, if its file gives one (a
+    /// track's song is otherwise named by its file).
+    pub title: Option<&'static str>,
 }
 
 impl Circuit {
