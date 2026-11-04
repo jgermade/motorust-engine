@@ -23,6 +23,30 @@ pub struct GameInfo {
     /// The window's icon, a PNG in the content pack, if it has one.
     #[serde(default, deserialize_with = "crate::circuits::data::optional_text")]
     pub icon: Option<&'static str>,
+    /// Where the game's releases are published, for it to update itself
+    /// (see [`crate::updater`]), if it does.
+    #[serde(default)]
+    pub updates: Option<Updates>,
+}
+
+/// Where a game's releases are published (see [`crate::updater`]): web
+/// addresses, `{version}` in them the release's version ("0.0.18") and
+/// `{target}` the platform's ("x86_64-unknown-linux-gnu").
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Updates {
+    /// A text file with the latest release's version.
+    #[serde(deserialize_with = "crate::circuits::data::text")]
+    pub latest: &'static str,
+    /// The release's archive for the platform, without its ending: the
+    /// updater adds ".zip" on Windows, "-app.zip" for an app on macOS and
+    /// ".tar.gz" otherwise.
+    #[serde(deserialize_with = "crate::circuits::data::text")]
+    pub archive: &'static str,
+    /// The release's SHA-256 sums (as `sha256sum` writes them), which the
+    /// archive must match.
+    #[serde(deserialize_with = "crate::circuits::data::text")]
+    pub sums: &'static str,
 }
 
 /// The title on the start menu: its first part in white, the rest in the

@@ -104,9 +104,11 @@ pub struct MirrorLook {
 }
 
 impl MirrorLook {
-    /// Water deep down `deep` (sRGB), under the sky of `palette`.
+    /// Water deep down `deep` (sRGB), under the sky of `palette` (in the
+    /// sky's own colour of deep water, if it has one).
     pub fn under(palette: &Palette, deep: Color) -> Self {
         let (power, bright) = palette.glint;
+        let deep = palette.deep_water.unwrap_or(deep);
         Self {
             deep: deep.to_linear().to_vec3().extend(power),
             sun: palette.sun_direction().extend(bright),

@@ -98,6 +98,9 @@ pub struct Palette {
     /// gathers round the sun's reflection (the power of its fall-off; high,
     /// a small sharp spark), and how bright it is.
     pub glint: (f32, f32),
+    /// The colour of the water deep down under this sky (sRGB), in place of
+    /// the circuit's own, if it has one (see [`super::mirror`]).
+    pub deep_water: Option<Color>,
 }
 
 /// The sun's glint on the water of most skies: a small, sharp spark.
@@ -174,6 +177,7 @@ impl Palette {
                     ..Grade::NONE
                 },
                 glint: GLINT,
+                deep_water: None,
             },
             SkyStyle::Day => Self {
                 zenith: ZENITH,
@@ -192,6 +196,7 @@ impl Palette {
                 fog: FOG,
                 grade: Grade::NONE,
                 glint: GLINT,
+                deep_water: None,
             },
             // A summer sunset in high country: the sun low in the south-east
             // and golden, raking across the hills so that each casts a long
@@ -229,6 +234,7 @@ impl Palette {
                     highlight_saturation: 0.72,
                 },
                 glint: GLINT,
+                deep_water: None,
             },
             // A clear Mediterranean summer afternoon, as a photograph shows
             // it rather than a cartoon: the sky a deep but not vivid blue
@@ -265,6 +271,7 @@ impl Palette {
                     highlight_saturation: 0.75,
                 },
                 glint: GLINT,
+                deep_water: None,
             },
             // The sun low in the west-north-west, in front on the start
             // straight: violet overhead, rose above the horizon and orange
@@ -287,6 +294,7 @@ impl Palette {
                 fog: FOG,
                 grade: Grade::NONE,
                 glint: GLINT,
+                deep_water: None,
             },
             // The airless sky of the Moon: nearly black overhead, deep indigo
             // above the horizon and dark slate-blue at the horizon; fierce
@@ -315,6 +323,7 @@ impl Palette {
                     highlight_saturation: 0.85,
                 },
                 glint: GLINT,
+                deep_water: None,
             },
             // Indoors, under the lamps of a shop's ceiling: no sky to see
             // (the room's walls and ceiling hide it; what is left of it is
@@ -346,11 +355,15 @@ impl Palette {
                     highlight_saturation: 0.9,
                 },
                 glint: GLINT,
+                deep_water: None,
             },
             // A retro sunset, as the 1980s drew it: indigo overhead, magenta
             // down to the horizon, orange and yellow only round a huge sun low
             // in the west-south-west, over the sea (so that the water mirrors
-            // magenta, dark, and the sun's column of light shows on it); pink light, violet shade,
+            // magenta, dark, and the sun's column of light shows on it), the
+            // water itself violet deep down; the light warm but bright, and
+            // plenty of it in the shade, so the road and the walls are not
+            // lost in it; pink light, violet shade,
             // magenta clouds; colours a little more saturated and contrasted;
             // the sun's light laid on the water in a broad column.
             SkyStyle::Synthwave => Self {
@@ -360,23 +373,24 @@ impl Palette {
                 glow: 0.8,
                 glow_color: Color::srgb(1.0, 0.78, 0.4),
                 sun_azimuth: 1.32 * std::f32::consts::PI,
-                sun_elevation: 0.07,
+                sun_elevation: 0.16,
                 // In its picture's own colours.
                 sun_disc: Color::WHITE,
-                sunlight: Color::srgb(1.0, 0.56, 0.62),
-                sunlight_strength: 0.75,
-                ambient: Color::srgb(0.62, 0.42, 0.95),
-                ambient_brightness: 600.0,
+                sunlight: Color::srgb(1.0, 0.82, 0.76),
+                sunlight_strength: 1.1,
+                ambient: Color::srgb(0.78, 0.7, 1.0),
+                ambient_brightness: 1100.0,
                 clouds: Color::srgb(0.96, 0.46, 0.76),
                 fog: FOG,
                 grade: Grade {
-                    saturation: 1.15,
+                    saturation: 1.05,
                     contrast: 1.08,
                     exposure: 0.0,
                     warmth: 0.0,
                     highlight_saturation: 1.0,
                 },
                 glint: (220.0, 2.5),
+                deep_water: Some(Color::srgb(0.2, 0.08, 0.32)),
             },
         }
     }
@@ -2279,7 +2293,7 @@ mod tests {
         let dusk = Palette::of(SkyStyle::Dusk);
         // Low, in the south-west.
         let sun = retro.sun_direction();
-        assert!(sun.y > 0.0 && sun.y < 0.1, "{sun}");
+        assert!(sun.y > 0.0 && sun.y < 0.2, "{sun}");
         assert!(sun.x < 0.0 && sun.z > 0.0, "{sun}");
         // Indigo overhead, magenta above the horizon, warmer at it.
         let zenith = retro.sky_color(Vec3::Y).to_srgba();

@@ -57,6 +57,13 @@ libc = "0.2"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 winit = { version = "0.30", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
+# To update the game from its releases (see src/updater.rs): HTTPS, the
+# archives' sums, and unpacking them.
+ureq = "3.5.1"
+sha2 = "0.11.1"
+tar = "0.4.46"
+flate2 = "1.1.10"
+zip = { version = "9.3.0", default-features = false, features = ["deflate"] }
 
 # En la web, los ajustes se guardan en el almacenamiento del navegador y se
 # avisa a la página cuando el juego ya se ve (la misma versión que ya usa
