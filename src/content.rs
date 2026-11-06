@@ -18,9 +18,19 @@
 //!   no compiling (and none is built in, which keeps such builds quicker to
 //!   link). It still reads none its pack's `pack.txt` leaves out, so it
 //!   fails where a release would.
-//! - **A release build, and every web build**, has them built into the
-//!   executable: the files each pack's `pack.txt` lists are embedded by
-//!   `build.rs` and served from memory, so the game stays a single file.
+//! - **A desktop release build** has them built into the executable: the
+//!   files each pack's `pack.txt` lists are embedded by `build.rs` and served
+//!   from memory, so the game stays a single file.
+//! - **A web build** has none built in, so that the `.wasm` stays small
+//!   (the browser compiles it and keeps it in memory whole, and with every
+//!   file in it, it was over 200 MB and froze the tab). The page downloads
+//!   the packs' files apart, in one `content.pack` (written by
+//!   `tools/web_pack.py`, the packs laid one over the other already, see
+//!   [`unpack`]), and hands its bytes over before the game starts, in the
+//!   global `motorustContent` ([`PAGE_GLOBAL`]), which the game takes
+//!   ([`try_file`]) the first time it needs a file. What only the asset
+//!   server reads (the songs) is left out of it and served loose beside the
+//!   page, in `content/` ([`WEB_FOLDER`]), and fetched when it is needed.
 //!
 //! Two ways to have one:
 //!
@@ -37,6 +47,14 @@ use bevy::asset::io::{
     AssetReader, AssetReaderError, AssetSourceBuilder, PathStream, Reader, SliceReader, VecReader,
 };
 use bevy::prelude::*;
+
+/// The global the web page leaves the bytes of its `content.pack` in, for
+/// the game to take as it starts (see the module's documentation).
+pub const PAGE_GLOBAL: &str = "motorustContent";
+
+/// The folder beside the web page the files left out of its `content.pack`
+/// are served from, each at its path in its pack (`content/music/bahia.mp3`).
+pub const WEB_FOLDER: &str = "content";
 
 /// A pack of content: its folder, whose `pack.txt` lists its files, and
 /// those files built in (in a release build and on the web; none in a
@@ -106,14 +124,31 @@ pub struct ContentPlugin;
 
 impl Plugin for ContentPlugin {
     fn build(&self, app: &mut App) {
-        app.register_asset_source(SOURCE, AssetSourceBuilder::new(|| Box::new(PackReader)));
+        app.register_asset_source(
+            SOURCE,
+            AssetSourceBuilder::new(|| Box::new(PackReader::new())),
+        );
     }
 }
 
 /// Reads the asset server's files from the packs, as [`file()`] finds
 /// them: from the disk in a development build, each time (a song is big,
-/// and kept only while it plays), from what is built in otherwise.
-struct PackReader;
+/// and kept only while it plays), from what is built in otherwise; on the
+/// web, what the page's `content.pack` leaves out from beside the page
+/// ([`WEB_FOLDER`]).
+struct PackReader {
+    #[cfg(target_arch = "wasm32")]
+    web: bevy::asset::io::wasm::HttpWasmAssetReader,
+}
+
+impl PackReader {
+    fn new() -> Self {
+        Self {
+            #[cfg(target_arch = "wasm32")]
+            web: bevy::asset::io::wasm::HttpWasmAssetReader::new(WEB_FOLDER),
+        }
+    }
+}
 
 impl AssetReader for PackReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
@@ -124,8 +159,15 @@ impl AssetReader for PackReader {
             let bytes =
                 std::fs::read(on_disk).map_err(|error| AssetReaderError::Io(error.into()))?;
             Box::new(VecReader::new(bytes))
+        } else if let Ok(bytes) = try_file(name) {
+            Box::new(SliceReader::new(bytes))
         } else {
-            Box::new(SliceReader::new(try_file(name).map_err(|_| not_found())?))
+            #[cfg(target_arch = "wasm32")]
+            {
+                Box::new(self.web.read(path).await?)
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            return Err(not_found());
         };
         Ok(reader)
     }
@@ -164,17 +206,95 @@ pub fn text(path: &str) -> &'static str {
 /// game goes on without it.
 pub fn try_file(path: &str) -> Result<&'static [u8], String> {
     if FROM_DISK {
-        on_disk::file(path)
-    } else {
-        packs()
+        return on_disk::file(path);
+    }
+    let built_in = packs().iter().find_map(|pack| {
+        pack.built_in
             .iter()
-            .find_map(|pack| {
-                pack.built_in
-                    .iter()
-                    .find(|(file, _)| *file == path)
-                    .map(|&(_, bytes)| bytes)
-            })
-            .ok_or_else(|| format!("{path}: in no content pack (pack.txt)"))
+            .find(|(file, _)| *file == path)
+            .map(|&(_, bytes)| bytes)
+    });
+    #[cfg(target_arch = "wasm32")]
+    let built_in = built_in.or_else(|| from_page::file(path));
+    built_in.ok_or_else(|| format!("{path}: in no content pack (pack.txt)"))
+}
+
+/// The files of a `content.pack`, as `tools/web_pack.py` writes it for the
+/// web page (and that tool's header says): `MRPK`, its version (1) and how
+/// many files it has, each a little-endian `u32`, then each file: the
+/// length of its path, its path (UTF-8), the length of its bytes (each a
+/// `u32`) and its bytes. A path is the file's in its pack, once, from the
+/// first pack that lists it.
+pub fn unpack(pack: &[u8]) -> Result<Vec<(&str, &[u8])>, String> {
+    let mut rest = pack;
+    let mut take = |length: usize| -> Result<&[u8], String> {
+        if rest.len() < length {
+            return Err("content.pack: cut short".to_string());
+        }
+        let (taken, after) = rest.split_at(length);
+        rest = after;
+        Ok(taken)
+    };
+    let number = |bytes: &[u8]| u32::from_le_bytes(bytes.try_into().expect("4 bytes")) as usize;
+    if take(4)? != b"MRPK" {
+        return Err("content.pack: not a content pack".to_string());
+    }
+    let version = number(take(4)?);
+    if version != 1 {
+        return Err(format!("content.pack: version {version}, not 1"));
+    }
+    let count = number(take(4)?);
+    let mut files = Vec::with_capacity(count);
+    for _ in 0..count {
+        let length = number(take(4)?);
+        let path = std::str::from_utf8(take(length)?)
+            .map_err(|error| format!("content.pack: a path: {error}"))?;
+        let length = number(take(4)?);
+        files.push((path, take(length)?));
+    }
+    if !rest.is_empty() {
+        return Err("content.pack: bytes after its last file".to_string());
+    }
+    Ok(files)
+}
+
+/// The packs' files the web page handed over (see the module's
+/// documentation), taken from it the first time one is asked for, and kept
+/// for as long as the game runs.
+#[cfg(target_arch = "wasm32")]
+mod from_page {
+    use std::collections::HashMap;
+    use std::sync::LazyLock;
+
+    use bevy::log::error;
+
+    static FILES: LazyLock<HashMap<&'static str, &'static [u8]>> = LazyLock::new(|| {
+        let global = js_sys::global();
+        let key = js_sys::JsString::from(super::PAGE_GLOBAL);
+        let Ok(value) = js_sys::Reflect::get(&global, &key) else {
+            return HashMap::new();
+        };
+        if value.is_undefined() || value.is_null() {
+            error!(
+                "The page has handed over no content pack (`{}`)",
+                super::PAGE_GLOBAL
+            );
+            return HashMap::new();
+        }
+        // Copied into the game's memory, and let go of in the page's.
+        let bytes: &'static [u8] = Vec::leak(js_sys::Uint8Array::new(&value).to_vec());
+        let _ = js_sys::Reflect::delete_property(&global, &key);
+        match super::unpack(bytes) {
+            Ok(files) => files.into_iter().collect(),
+            Err(error) => {
+                error!("{error}");
+                HashMap::new()
+            }
+        }
+    });
+
+    pub fn file(path: &str) -> Option<&'static [u8]> {
+        FILES.get(path).copied()
     }
 }
 
@@ -420,10 +540,88 @@ mod tests {
     fn the_asset_server_reads_a_file_from_its_pack() {
         use bevy::tasks::block_on;
 
-        let mut reader = block_on(PackReader.read(Path::new("circuits/bahia.ron"))).unwrap();
+        let packs = PackReader::new();
+        let mut reader = block_on(packs.read(Path::new("circuits/bahia.ron"))).unwrap();
         let mut bytes = Vec::new();
         block_on(reader.read_to_end(&mut bytes)).unwrap();
         assert_eq!(bytes, read("circuits/bahia.ron"));
-        assert!(block_on(PackReader.read(Path::new("nowhere.ron"))).is_err());
+        assert!(block_on(packs.read(Path::new("nowhere.ron"))).is_err());
+    }
+
+    /// A `content.pack` as `tools/web_pack.py` writes it.
+    fn packed(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut pack = b"MRPK".to_vec();
+        pack.extend(1u32.to_le_bytes());
+        pack.extend((files.len() as u32).to_le_bytes());
+        for (path, bytes) in files {
+            pack.extend((path.len() as u32).to_le_bytes());
+            pack.extend(path.as_bytes());
+            pack.extend((bytes.len() as u32).to_le_bytes());
+            pack.extend(*bytes);
+        }
+        pack
+    }
+
+    #[test]
+    fn a_content_pack_gives_back_its_files() {
+        let files: &[(&str, &[u8])] = &[
+            ("game.ron", b"(name: \"Motorust\")"),
+            ("textures/grass.jpg", &[0xff, 0xd8, 0, 1, 2]),
+            ("empty.txt", b""),
+        ];
+        let pack = packed(files);
+        assert_eq!(unpack(&pack).unwrap(), files);
+        assert_eq!(unpack(&packed(&[])).unwrap(), []);
+    }
+
+    #[test]
+    fn a_broken_content_pack_is_refused() {
+        let pack = packed(&[("game.ron", b"()")]);
+        assert!(unpack(&pack[..pack.len() - 1]).is_err(), "cut short");
+        assert!(
+            unpack(&[pack.as_slice(), b"!"].concat()).is_err(),
+            "too long"
+        );
+        assert!(unpack(b"PK\x03\x04").is_err(), "not a pack");
+        let mut later = pack.clone();
+        later[4] = 2;
+        assert!(unpack(&later).is_err(), "another version");
+    }
+
+    /// `tools/web_pack.py` writes the packs as [`unpack`] reads them,
+    /// where there is a Python to run it.
+    #[test]
+    fn the_web_pack_tool_writes_what_is_read() {
+        let Some(python) = python() else {
+            return;
+        };
+        let out = std::env::temp_dir().join(format!("motorust-web-pack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        let status = std::process::Command::new(python)
+            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tools/web_pack.py"))
+            .arg(&out)
+            .arg(ENGINE.folder)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let pack = std::fs::read(out.join("content.pack")).unwrap();
+        let files = unpack(&pack).unwrap();
+        let listed = listed(&ENGINE);
+        assert_eq!(files.len(), listed.len());
+        for (path, bytes) in files {
+            assert!(listed.contains(&path), "{path}");
+            assert_eq!(bytes, read(path), "{path}");
+        }
+        std::fs::remove_dir_all(&out).unwrap();
+    }
+
+    /// The Python there is to run the tools with, if there is one.
+    fn python() -> Option<&'static str> {
+        ["python3", "python"].into_iter().find(|python| {
+            std::process::Command::new(python)
+                .arg("--version")
+                .output()
+                .is_ok_and(|output| output.status.success())
+        })
     }
 }

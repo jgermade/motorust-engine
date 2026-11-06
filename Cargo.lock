@@ -3600,6 +3600,7 @@ dependencies = [
  "flate2",
  "gilrs",
  "image",
+ "js-sys",
  "libc",
  "objc2 0.6.5",
  "objc2-game-controller",

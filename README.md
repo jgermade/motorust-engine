@@ -136,6 +136,7 @@ come.
 | Tool | What it does |
 |---|---|
 | `web/build.sh` | Builds the web version of the demo into a folder ready to be served (`dist/web` by default): the page (`web/index.html`), the `.wasm` and the JavaScript that loads it. Needs the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at `Cargo.lock`'s version of `wasm-bindgen`. |
+| `tools/web_pack.py` | Writes the content packs' files for a web build apart from the `.wasm` (which has none built in, see `src/content.rs`): `content.pack`, every file the packs list, laid one over the other, which the page downloads and hands to the game (`unpack` reads it), and the songs loose in `content/`, which the asset server fetches when one plays. `python3 tools/web_pack.py OUT GAME_ASSETS... ENGINE_ASSETS`. Needs Python 3 alone. |
 | `tools/circuit_layout.py` | Works a circuit's lap out from its file (`assets/circuits/NAME.ron`) as `src/track.rs` does (the centre line and the height profile), draws it from above and its profile, and reports its length, its tightest bend, its steepest grade and the crests the bike takes off over, against the limits the tests set. Needs numpy (and matplotlib for the pictures). |
 
 ## Builds and releases
