@@ -326,9 +326,13 @@ fn average_color(image: &Image) -> Color {
     let Some(data) = image.data.as_ref() else {
         return Color::WHITE;
     };
+    let to_linear = &*SRGB_TO_LINEAR;
     let sum = data[..pixels * 4].chunks(4).fold(Vec3::ZERO, |sum, p| {
-        let linear = Color::srgb_u8(p[0], p[1], p[2]).to_linear();
-        sum + Vec3::new(linear.red, linear.green, linear.blue)
+        sum + Vec3::new(
+            to_linear[p[0] as usize],
+            to_linear[p[1] as usize],
+            to_linear[p[2] as usize],
+        )
     });
     let mean = sum / pixels as f32;
     Color::linear_rgb(mean.x, mean.y, mean.z)
@@ -1358,10 +1362,11 @@ fn tiling(width: u32, height: u32, pixel: impl Fn(u32, u32) -> Color) -> Image {
 
 /// [`tiling`]'s first level alone, opaque, without its mipmaps.
 fn tiling_level(width: u32, height: u32, pixel: impl Fn(u32, u32) -> Color) -> Image {
-    let byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+    // Through the table of the sRGB curve, not its `powf` for each pixel.
+    let byte = to_8_bits(true);
     let data = (0..width * height)
         .flat_map(|i| {
-            let color = pixel(i % width, i / width).to_srgba();
+            let color = pixel(i % width, i / width).to_linear();
             [byte(color.red), byte(color.green), byte(color.blue), 255]
         })
         .collect();
@@ -1579,23 +1584,12 @@ pub fn generate_mipmaps(image: &mut Image) {
         TextureFormat::R8Unorm => (false, 1),
         other => panic!("solo se generan mipmaps de imágenes de 8 bits, no {other:?}"),
     };
-    let to_linear: Vec<f32> = (0..=255u8)
-        .map(|v| {
-            if srgb {
-                Color::srgb_u8(v, 0, 0).to_linear().red
-            } else {
-                v as f32 / 255.0
-            }
-        })
-        .collect();
-    let to_srgb = |linear: f32| {
-        let value = if srgb {
-            Color::linear_rgb(linear, 0.0, 0.0).to_srgba().red
-        } else {
-            linear
-        };
-        (value * 255.0).round() as u8
+    let to_linear: &[f32; 256] = if srgb {
+        &SRGB_TO_LINEAR
+    } else {
+        &UNORM_TO_LINEAR
     };
+    let to_srgb = to_8_bits(srgb);
 
     let (mut width, mut height) = (image.width(), image.height());
     let mut data = image.data.take().expect("la imagen tiene datos en la CPU");
@@ -1635,9 +1629,72 @@ pub fn generate_mipmaps(image: &mut Image) {
     image.texture_descriptor.mip_level_count = levels;
 }
 
+/// Each 8-bit sRGB code in linear space (0 to 1), worked out once: the
+/// curve's `powf` for every texel is slow, the more so on the web.
+static SRGB_TO_LINEAR: std::sync::LazyLock<[f32; 256]> = std::sync::LazyLock::new(|| {
+    std::array::from_fn(|code| Color::srgb_u8(code as u8, 0, 0).to_linear().red)
+});
+
+/// Each 8-bit code of data (not colour) as a value from 0 to 1.
+static UNORM_TO_LINEAR: std::sync::LazyLock<[f32; 256]> =
+    std::sync::LazyLock::new(|| std::array::from_fn(|code| code as f32 / 255.0));
+
+/// What turns an average of linear values (0 to 1) back into the 8 bits of
+/// a texel, rounded to the nearest: through the sRGB curve when `srgb`.
+///
+/// By the 255 values where one code gives way to the next, worked out once,
+/// and a binary search among them: the curve's `powf` for every channel of
+/// every texel of every mip level took most of the start of the game on the
+/// web (some 8 s of 17 in a profile, with no threads to share it).
+fn to_8_bits(srgb: bool) -> impl Fn(f32) -> u8 {
+    let bounds: Vec<f32> = (0..255u16)
+        .map(|code| {
+            let halfway = (f32::from(code) + 0.5) / 255.0;
+            if srgb {
+                Color::srgb(halfway, 0.0, 0.0).to_linear().red
+            } else {
+                halfway
+            }
+        })
+        .collect();
+    move |linear: f32| bounds.partition_point(|&bound| bound <= linear) as u8
+}
+
 #[cfg(any(test, feature = "testing"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_linear_value_comes_back_to_the_8_bits_the_curve_gives() {
+        for srgb in [true, false] {
+            let to_8_bits = to_8_bits(srgb);
+            let mut off = 0;
+            for step in 0..=100_000 {
+                let linear = step as f32 / 100_000.0;
+                let curve = if srgb {
+                    Color::linear_rgb(linear, 0.0, 0.0).to_srgba().red
+                } else {
+                    linear
+                };
+                let expected = (curve * 255.0).round() as u8;
+                let got = to_8_bits(linear);
+                assert!(got.abs_diff(expected) <= 1, "{linear}: {got} {expected}");
+                off += usize::from(got != expected);
+            }
+            // At most a hair's breadth off, right on a boundary.
+            assert!(off <= 10, "{off} off by one");
+            for code in 0..=255u8 {
+                let linear = if srgb {
+                    Color::srgb_u8(code, 0, 0).to_linear().red
+                } else {
+                    f32::from(code) / 255.0
+                };
+                assert_eq!(to_8_bits(linear), code, "each code back to itself");
+            }
+            assert_eq!(to_8_bits(-0.1), 0);
+            assert_eq!(to_8_bits(1.5), 255);
+        }
+    }
 
     #[test]
     fn mipmaps_go_down_to_one_pixel() {

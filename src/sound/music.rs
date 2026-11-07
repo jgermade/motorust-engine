@@ -31,7 +31,16 @@ use std::sync::Arc;
 
 use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, LoadContext};
-use bevy::audio::{AudioSinkPlayback, Decodable, Volume};
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::audio::AudioSinkPlayback;
+use bevy::audio::{Decodable, Volume};
+
+/// What a song's volume is set through: Bevy's sink, or on the web the
+/// sound's own (see `super::output`).
+#[cfg(not(target_arch = "wasm32"))]
+type Sink = AudioSink;
+#[cfg(target_arch = "wasm32")]
+type Sink = super::output::web::WebSink;
 use bevy::prelude::*;
 
 use super::{MASTER, SoundControls, music_gain};
@@ -469,7 +478,7 @@ pub(super) fn play_music(
     settings: Option<Res<Settings>>,
     assets: Res<AssetServer>,
     jukebox: Option<Res<Jukebox>>,
-    mut playing: Query<(Entity, &mut Music, Option<&mut AudioSink>)>,
+    mut playing: Query<(Entity, &mut Music, Option<&mut Sink>)>,
 ) {
     let jukebox = jukebox.and_then(|jukebox| jukebox.playing);
     let dt = time.delta_secs();
@@ -552,6 +561,40 @@ pub(super) fn play_music(
                 played: 0.0,
             },
         ));
+    }
+}
+
+/// The songs to start on the web: loaded or not, with no voice yet.
+#[cfg(target_arch = "wasm32")]
+type Waiting<'w, 's> =
+    Query<'w, 's, (Entity, &'static AudioPlayer<SongSource>), (With<Music>, Without<Sink>)>;
+
+/// On the web, each song as soon as it is loaded, through the sound's own
+/// way out (silent: [`play_music`] fades it in), with its voice on its
+/// entity.
+#[cfg(target_arch = "wasm32")]
+pub fn start_web_songs(
+    mut commands: Commands,
+    songs: Res<Assets<SongSource>>,
+    waiting: Waiting,
+    mut audio: NonSendMut<super::output::web::WebAudio>,
+) {
+    use std::num::NonZero;
+
+    for (entity, player) in &waiting {
+        let Some(song) = songs.get(&player.0) else {
+            continue;
+        };
+        let samples = rodio::source::UniformSourceIterator::new(
+            song.decoder(),
+            NonZero::new(2).unwrap(),
+            NonZero::new(super::output::RATE).unwrap(),
+        );
+        let voice = super::output::Voice::new(0.0);
+        audio.voices.play(samples, voice.clone());
+        commands
+            .entity(entity)
+            .insert(super::output::web::WebSink(voice));
     }
 }
 

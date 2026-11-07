@@ -12,10 +12,13 @@
 
 pub mod ambience;
 pub mod music;
+#[cfg(any(target_arch = "wasm32", test))]
+mod output;
 mod synth;
 
 use std::sync::Arc;
 
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::audio::AddAudioSource;
 use bevy::prelude::*;
 
@@ -71,9 +74,17 @@ impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
         let controls = Arc::new(Controls::default());
         controls.master.set(MASTER);
+        // On the web, through the sound's own way out (see `output`), not
+        // Bevy's.
+        #[cfg(not(target_arch = "wasm32"))]
         app.add_audio_source::<Mix>()
-            .add_audio_source::<music::SongSource>()
-            .init_asset_loader::<music::SongLoader>()
+            .add_audio_source::<music::SongSource>();
+        #[cfg(target_arch = "wasm32")]
+        app.init_asset::<music::SongSource>()
+            .init_non_send::<output::web::WebAudio>()
+            .add_systems(Update, music::start_web_songs)
+            .add_systems(Last, output::web::play);
+        app.init_asset_loader::<music::SongLoader>()
             .insert_resource(SoundControls(controls))
             .add_message::<StartBeep>()
             .add_message::<RaceCue>()
@@ -136,6 +147,7 @@ pub fn music_gain(level: u32) -> f32 {
     level as f32 / DEFAULT_VOLUME as f32 * MUSIC_AT_DEFAULT
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn start_mixer(
     mut commands: Commands,
     controls: Res<SoundControls>,
@@ -149,6 +161,24 @@ fn start_mixer(
         controls: controls.0.clone(),
     });
     commands.spawn(AudioPlayer(mix));
+}
+
+/// On the web, the mix plays through the sound's own way out.
+#[cfg(target_arch = "wasm32")]
+fn start_mixer(
+    controls: Res<SoundControls>,
+    settings: Option<Res<Settings>>,
+    mut audio: NonSendMut<output::web::WebAudio>,
+) {
+    use bevy::audio::Decodable;
+
+    if let Some(settings) = settings {
+        controls.0.fx.set(fx_gain(settings.fx_volume));
+    }
+    let mix = Mix {
+        controls: controls.0.clone(),
+    };
+    audio.voices.play(mix.decoder(), output::Voice::new(1.0));
 }
 
 fn sync_settings_sound(settings: Option<Res<Settings>>, controls: Res<SoundControls>) {

@@ -136,6 +136,10 @@ pub fn app() -> App {
         })
         // Los mandos los lee `gamepads`, que además los vuelve a buscar.
         .disable::<bevy::gilrs::GilrsPlugin>();
+    // On the web the sound goes out its own way (`sound::output`), which
+    // keeps playing smoothly through a long frame where Bevy's crackled.
+    #[cfg(target_arch = "wasm32")]
+    let plugins = plugins.disable::<bevy::audio::AudioPlugin>();
     // Pipelined rendering draws each frame while the next one is
     // simulated: more frames per second when the CPU holds them back, but
     // each one a frame later after the controls. Options can turn it off

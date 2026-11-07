@@ -1,7 +1,7 @@
 //! Props made elsewhere (with Meshy), in packs (a game's importer prepares
 //! them): each pack's meshes by name and one material in the
-//! colours of all of them ([`PropPack`]), loaded as the game starts for the
-//! themes that name them ([`PropPacks`]); and how a prop is placed: where
+//! colours of all of them ([`PropPack`]), loaded for the themes that name
+//! them as the first circuit with one of those is built ([`PropPacks`]); and how a prop is placed: where
 //! it stands and which way it faces ([`spot`]), the ground kept clear so
 //! that a landmark is in view from the road ([`in_view`]), and the parts
 //! that turn ([`Turning`]). The engine's: the themes of a game place their
@@ -127,10 +127,15 @@ impl PropPack {
 
     /// The pack in `bin` (as an importer writes it) and its colours in
     /// `color`.
-    pub fn load(world: &mut World, bin: &[u8], color: &[u8]) -> Self {
+    pub fn load(
+        meshes: &mut Assets<Mesh>,
+        images: &mut Assets<Image>,
+        materials: &mut Assets<StandardMaterial>,
+        bin: &[u8],
+        color: &[u8],
+    ) -> Self {
         let pack = read(bin);
         let atlas = texture(color, true);
-        let mut meshes = world.resource_mut::<Assets<Mesh>>();
         let pieces = pack
             .meshes
             .into_iter()
@@ -149,15 +154,13 @@ impl PropPack {
                 )
             })
             .collect();
-        let atlas = world.resource_mut::<Assets<Image>>().add(atlas);
-        let material = world
-            .resource_mut::<Assets<StandardMaterial>>()
-            .add(StandardMaterial {
-                base_color_texture: Some(atlas),
-                perceptual_roughness: 0.85,
-                reflectance: 0.3,
-                ..default()
-            });
+        let atlas = images.add(atlas);
+        let material = materials.add(StandardMaterial {
+            base_color_texture: Some(atlas),
+            perceptual_roughness: 0.85,
+            reflectance: 0.3,
+            ..default()
+        });
         Self { pieces, material }
     }
 }
@@ -177,30 +180,45 @@ pub fn bounds(mesh: &Mesh) -> (Vec3, Vec3) {
 
 /// The packs of props the registered themes name (see
 /// [`super::themes::Theme::packs`]), by their folders in `assets/models/`,
-/// each loaded once, as the game starts.
-#[derive(Resource)]
+/// each loaded once: those of a circuit's themes as it is first built
+/// ([`PropPacks::load_for`]), not all of them as the game starts (they took
+/// seconds of it, on the web most of all, for circuits maybe never raced).
+#[derive(Resource, Default)]
 pub struct PropPacks(HashMap<&'static str, PropPack>);
 
-impl FromWorld for PropPacks {
-    fn from_world(world: &mut World) -> Self {
-        let packs = super::themes::packs()
-            .into_iter()
-            .map(|folder| {
+impl PropPacks {
+    /// Loads, if they are not yet, the packs the themes `themes` place.
+    pub fn load_for(
+        &mut self,
+        themes: &super::themes::Themes,
+        meshes: &mut Assets<Mesh>,
+        images: &mut Assets<Image>,
+        materials: &mut Assets<StandardMaterial>,
+    ) {
+        for (name, _) in themes.iter() {
+            for &folder in super::themes::packs_of(name) {
+                if self.0.contains_key(folder) {
+                    continue;
+                }
                 let pack = PropPack::load(
-                    world,
+                    meshes,
+                    images,
+                    materials,
                     crate::content::file(&format!("models/{folder}/props.bin")),
                     crate::content::file(&format!("models/{folder}/color.jpg")),
                 );
-                (folder, pack)
-            })
-            .collect();
-        Self(packs)
+                self.0.insert(folder, pack);
+            }
+        }
     }
-}
 
-impl PropPacks {
+    /// Whether the pack in `assets/models/FOLDER/` is loaded.
+    pub fn has(&self, folder: &str) -> bool {
+        self.0.contains_key(folder)
+    }
+
     /// The pack in `assets/models/FOLDER/`. It stops the game, saying why,
-    /// if no theme named it.
+    /// if no theme of the circuit being built named it.
     pub fn get(&self, folder: &str) -> &PropPack {
         self.0
             .get(folder)
