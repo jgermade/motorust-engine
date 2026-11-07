@@ -100,7 +100,8 @@ pub trait Theme: Any + Send + Sync {
     }
 
     /// The packs of props it places, by their folders in `assets/models/`
-    /// (see [`super::prop_pack::PropPacks`]), loaded as the game starts.
+    /// (see [`super::prop_pack::PropPacks`]), loaded as the first circuit
+    /// with this theme is built.
     fn packs() -> &'static [&'static str]
     where
         Self: Sized,
@@ -148,6 +149,17 @@ fn reader(name: &str) -> Option<Reader> {
         .iter()
         .find(|(registered, ..)| *registered == name)
         .map(|&(_, _, reader, _)| reader)
+}
+
+/// The packs of props the theme registered under `name` places (none if no
+/// theme is).
+pub fn packs_of(name: &str) -> &'static [&'static str] {
+    REGISTERED
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .find(|(registered, ..)| *registered == name)
+        .map_or(&[], |&(.., packs)| packs)
 }
 
 /// The packs of props the themes registered place, each once.

@@ -128,12 +128,16 @@ impl Plugin for WorldPlugin {
             .init_resource::<PreviewRoots>()
             .init_resource::<BuiltTerrains>()
             .init_resource::<CircuitLoading>()
+            .init_resource::<Settling>()
             .init_resource::<textures::WorldTextures>()
             .init_resource::<prop_pack::PropPacks>()
             .init_resource::<Sea>()
             .add_systems(Startup, (build_world, sky::spawn_sky, spawn_sun))
             .add_message::<CircuitsReloaded>()
-            .add_systems(PreUpdate, (forget_reloaded_circuits, rebuild_world).chain())
+            .add_systems(
+                PreUpdate,
+                (forget_reloaded_circuits, rebuild_world, settle_on_the_web).chain(),
+            )
             .add_systems(
                 Update,
                 (
@@ -573,15 +577,75 @@ fn menu_distance(a: usize, b: usize, count: usize) -> usize {
 
 /// Whether the circuits are prepared in the background now: in every menu,
 /// from the welcome screen on, so that by the time the tracks are chosen
-/// most are there; not in a race. On the web, only in the tracks menu, as
-/// the work in the background runs on the main thread there and would stop
-/// the welcome screen.
+/// most are there; not in a race. Never on the web: the work in the
+/// background runs on the page's one thread there, and each circuit stopped
+/// the menus (and their music) for seconds, one after another; there the
+/// one chosen is built when the menu rests on it ([`settle_on_the_web`]).
 fn preparing_in_the_menus(state: Option<Res<State<GameState>>>) -> bool {
     match state.as_deref().map(State::get) {
         Some(GameState::Race) | Some(GameState::Editor) | None => false,
-        Some(GameState::Tracks) => true,
         Some(_) => !WEB,
     }
+}
+
+/// On the web, the circuit the tracks menu shows that is not built yet:
+/// built once the menu has rested on it a moment ([`SETTLE`]), so that
+/// going past circuits does not stop the page at each.
+#[derive(Resource, Default)]
+struct Settling {
+    index: Option<usize>,
+    /// When the menu came to it (s, of real time).
+    since: Option<f64>,
+}
+
+/// How long the tracks menu rests on a circuit before it is built, on the
+/// web (s).
+const SETTLE: f64 = 0.4;
+
+/// Builds, on the web, the circuit the tracks menu has rested on (see
+/// [`Settling`]): the page stops while it is, with the menu saying it
+/// loads ([`CircuitLoading`]) the moment before.
+#[allow(clippy::too_many_arguments)]
+fn settle_on_the_web(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    current: Res<CurrentCircuit>,
+    mut settling: ResMut<Settling>,
+    roots: Query<&WorldRoot, Without<Superseded>>,
+    mut builder: Builder,
+    mut preparing: ResMut<Preparing>,
+    mut finishing: ResMut<Finishing>,
+    mut roadsides: ResMut<Roadsides>,
+    mut track: ResMut<Track>,
+    mut loading: ResMut<CircuitLoading>,
+) {
+    let Some(index) = settling.index else {
+        return;
+    };
+    // Gone on to another one, or built meanwhile (a race begun from it).
+    if index != current.0 || roots.iter().any(|root| root.0 == index) {
+        *settling = Settling::default();
+        return;
+    }
+    let now = time.elapsed_secs_f64();
+    let since = *settling.since.get_or_insert(now);
+    if now - since < SETTLE {
+        return;
+    }
+    *settling = Settling::default();
+    complete_now(
+        index,
+        false,
+        &mut commands,
+        &mut builder,
+        &mut preparing,
+        &mut finishing,
+        &mut roadsides,
+    );
+    if let Some(roadside) = roadsides.0.get(&index) {
+        roadside.apply(&mut track);
+    }
+    loading.set_if_neq(CircuitLoading(false));
 }
 
 /// In the menus (see [`preparing_in_the_menus`]), the circuits not yet built
@@ -948,6 +1012,7 @@ fn rebuild_world(
     mut finishing: ResMut<Finishing>,
     mut previewing: ResMut<Previewing>,
     mut loading: ResMut<CircuitLoading>,
+    mut settling: ResMut<Settling>,
 ) {
     if !current.is_changed() || current.is_added() {
         return;
@@ -1019,6 +1084,14 @@ fn rebuild_world(
                 Urgency::Now,
             ));
         }
+    } else if WEB && in_menu && !found {
+        // On the web, once the menu rests on it.
+        *settling = Settling {
+            index: Some(current.0),
+            since: None,
+        };
+        loading.set_if_neq(CircuitLoading(true));
+        return;
     } else {
         complete_now(
             current.0,
@@ -1067,7 +1140,7 @@ fn build_world(
 struct Builder<'w> {
     circuits: Res<'w, Circuits>,
     textures: Res<'w, textures::WorldTextures>,
-    packs: Res<'w, prop_pack::PropPacks>,
+    packs: ResMut<'w, prop_pack::PropPacks>,
     sea: Res<'w, Sea>,
     sea_materials: ResMut<'w, Assets<sea::SeaMaterial>>,
     mirror_materials: ResMut<'w, Assets<mirror::MirrorMaterial>>,
@@ -1141,6 +1214,13 @@ fn build(
         let material = mirror.into_material(&mut builder.images);
         builder.mirror_materials.add(material)
     });
+    // The packs of props its themes place, the first time one needs them.
+    builder.packs.load_for(
+        &scenery.themes,
+        &mut builder.meshes,
+        &mut builder.images,
+        &mut builder.materials,
+    );
     let mut assets = Assets3d {
         textures: &builder.textures,
         packs: &builder.packs,
@@ -1285,6 +1365,13 @@ fn finish(commands: &mut Commands, shown: Shown, rest: Rest, builder: &mut Build
     };
     let scenery = &basis.circuit.scenery;
     let split = realm::splits(scenery);
+    // The packs of props its themes place, the first time one needs them.
+    builder.packs.load_for(
+        &scenery.themes,
+        &mut builder.meshes,
+        &mut builder.images,
+        &mut builder.materials,
+    );
     let mut assets = Assets3d {
         textures: &builder.textures,
         packs: &builder.packs,

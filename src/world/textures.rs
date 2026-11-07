@@ -1362,10 +1362,11 @@ fn tiling(width: u32, height: u32, pixel: impl Fn(u32, u32) -> Color) -> Image {
 
 /// [`tiling`]'s first level alone, opaque, without its mipmaps.
 fn tiling_level(width: u32, height: u32, pixel: impl Fn(u32, u32) -> Color) -> Image {
-    let byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+    // Through the table of the sRGB curve, not its `powf` for each pixel.
+    let byte = to_8_bits(true);
     let data = (0..width * height)
         .flat_map(|i| {
-            let color = pixel(i % width, i / width).to_srgba();
+            let color = pixel(i % width, i / width).to_linear();
             [byte(color.red), byte(color.green), byte(color.blue), 255]
         })
         .collect();
