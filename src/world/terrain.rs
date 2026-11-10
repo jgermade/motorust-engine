@@ -1238,8 +1238,18 @@ impl Terrain {
     /// The colours of a verge's piece (see [`Verge`]) beside `p` on the
     /// road: on top, the grass of the blocks beside the road in its band, but
     /// level, never weathered and of one shade, so that the bands go by
-    /// unbroken; and the earth of their sides, on its edge.
+    /// unbroken; and the earth of their sides, on its edge. Sand, top and
+    /// edge, where the road is as low as a beach ([`BEACH_HEIGHT`]).
     fn verge_colors(&self, grid: &VoxelGrid, p: Vec3, band: u8) -> ([f32; 4], [f32; 4]) {
+        // By a beach, where the road runs as low as the sand does, the
+        // verge is sand as the ground beside it is, banded as the grass is.
+        if p.y < BEACH_HEIGHT && self.soil != Soil::Floor {
+            let [r, g, b, a] = self.ground_color(Ground::Sand, p, Vec3::Y);
+            let paint = grid.paints[1];
+            let color = [r * paint.x, g * paint.y, b * paint.z, a];
+            let light = ARCADE_GREENS[band as usize];
+            return (grid.cut(color, light), grid.cut(color, light));
+        }
         let [r, g, b, a] = shaded(self.grass_tint(p, Vec3::Y, 0.0), self.grass_shade);
         let paint = grid.paints[0];
         let color = [r * paint.x, g * paint.y, b * paint.z, a];
