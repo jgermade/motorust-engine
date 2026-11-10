@@ -216,6 +216,10 @@ pub enum WallStyle {
     /// bricks and a course of plates on it in a running bond, studs on top
     /// (see `world::bricks`).
     Bricks,
+    /// A race track's barrier of dark panels, its skirt banded in amber, a
+    /// strip of light along its top in the first colour of the circuit's
+    /// curbs.
+    Barrier,
 }
 
 /// What the steep faces of the terrain (cliffs, rock walls and the rock
@@ -261,6 +265,11 @@ pub enum SkyStyle {
     /// light of the lamps from overhead, white and warm, softly filling the
     /// shade, as in a shop.
     Indoor,
+    /// A clear night on the Earth: the stars and the Milky Way overhead, the
+    /// Moon up, its light cold and faint, the shade filled enough to race
+    /// by; what is lit of its own (strips of light, windows, a bike's pads)
+    /// stands out.
+    Night,
     /// A retro sunset, as the covers and the arcade racers of the 1980s drew
     /// theirs: indigo overhead, magenta down to the horizon, orange and
     /// yellow round a huge sun low in the west-south-west, yellow to magenta, striped across
@@ -342,6 +351,10 @@ pub enum BridgeStyle {
     OrangeTrack,
     /// A slide's chute of yellow plastic between tall red sides.
     Slide,
+    /// A skyway: a slim dark deck high on pairs of pylons, with nothing
+    /// overhead, between barriers lit along their tops
+    /// ([`WallStyle::Barrier`]).
+    Skyway,
 }
 
 /// A dam across a gorge, as El Atazar's, with the road along its crest (a
@@ -653,6 +666,23 @@ pub struct Scenery {
     /// [`Look`]).
     #[serde(default)]
     pub look: Look,
+    /// What its roads are paved with (see [`Paving`]): asphalt if left out.
+    #[serde(default)]
+    pub paving: Paving,
+}
+
+/// What a circuit's roads are paved with.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Deserialize)]
+pub enum Paving {
+    /// Asphalt, with its painted lines and, in the bends, its curbs.
+    #[default]
+    Asphalt,
+    /// The plates of a track no wheel rolls on: pale plates in two greys,
+    /// dark panels let into them either side of a spine down the middle, a
+    /// band of amber across every so often, and a strip of light along
+    /// each edge in the first colour of the circuit's curbs; no painted
+    /// lines and no skid marks.
+    Plates,
 }
 
 /// How a circuit's world is drawn.

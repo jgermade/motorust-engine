@@ -325,6 +325,35 @@ impl Palette {
                 glint: GLINT,
                 deep_water: None,
             },
+            // A clear night on the Earth: the space sky's black and its
+            // stars, the Moon up where the light comes from, cold and
+            // faint, and the shade filled enough to race by; a far haze of
+            // deep blue, and the picture lifted a little.
+            SkyStyle::Night => Self {
+                zenith: Color::srgb(0.01, 0.015, 0.06),
+                above_horizon: Color::srgb(0.03, 0.05, 0.13),
+                horizon: Color::srgb(0.07, 0.1, 0.2),
+                glow: 0.2,
+                glow_color: Color::srgb(0.4, 0.55, 0.9),
+                sun_azimuth: MOON_AZIMUTH,
+                sun_elevation: BODY_ELEVATION,
+                sun_disc: Color::WHITE,
+                sunlight: Color::srgb(0.72, 0.82, 1.0),
+                sunlight_strength: 0.3,
+                ambient: Color::srgb(0.5, 0.62, 0.95),
+                ambient_brightness: 620.0,
+                clouds: Color::srgba(0.65, 0.75, 0.95, 0.0),
+                fog: (700.0, 4200.0),
+                grade: Grade {
+                    saturation: 1.0,
+                    contrast: 1.1,
+                    exposure: 0.25,
+                    warmth: -0.006,
+                    highlight_saturation: 0.9,
+                },
+                glint: GLINT,
+                deep_water: Some(Color::srgb(0.01, 0.03, 0.08)),
+            },
             // Indoors, under the lamps of a shop's ceiling: no sky to see
             // (the room's walls and ceiling hide it; what is left of it is
             // the colour of the far walls, as the fog is), no sun, no
@@ -813,7 +842,7 @@ pub fn light_the_sky(
         *mesh = dome(&palette);
     }
     if let Ok(mut visibility) = visibilities.get_mut(parts.space_sky) {
-        *visibility = if style == SkyStyle::Space {
+        *visibility = if matches!(style, SkyStyle::Space | SkyStyle::Night) {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -823,7 +852,10 @@ pub fn light_the_sky(
     // In space, the sun with no air round it: small and sharp.
     let space = style == SkyStyle::Space;
     let retro = style == SkyStyle::Synthwave;
-    let sun_size = if space {
+    let sun_size = if style == SkyStyle::Night {
+        // The light is the Moon's, which is drawn as itself.
+        0.0
+    } else if space {
         2.0 * SPACE_SUN_GLOW * CLOUD_DISTANCE * (SPACE_SUN_DIAMETER.to_radians() / 2.0).tan()
     } else if retro {
         SUN_SIZE * SYNTHWAVE_SUN

@@ -9,7 +9,7 @@ use bevy::{
 use super::Assets3d;
 use super::lettering::sign_image;
 use super::quads::MeshBuilder;
-use super::scenery::{BridgeStyle, Gantry, Scenery, Side, Soil, Span, WallStyle};
+use super::scenery::{BridgeStyle, Gantry, Paving, Scenery, Side, Soil, Span, WallStyle};
 use super::terrain::{Terrain, shaded};
 use super::textures::{STONE_WALL, WorldTextures};
 use crate::geometry::{fbm, smoothstep};
@@ -52,6 +52,45 @@ fn arcade_wall_color(style: WallStyle, band: usize, up: f32) -> Option<Color> {
     let c = color.to_srgba();
     Some(Color::srgb(c.red * shade, c.green * shade, c.blue * shade))
 }
+/// A road of plates (see [`Paving::Plates`]): its two greys, a plate this
+/// many points of the lap long;
+const PLATES: [Color; 2] = [Color::srgb(0.6, 0.62, 0.65), Color::srgb(0.5, 0.52, 0.56)];
+const PLATE_POINTS: usize = 4;
+/// its dark panels, from and to these shares of the road's half width
+/// either side, over these points of every so many;
+const PANEL: Color = Color::srgb(0.13, 0.14, 0.17);
+const PANEL_ACROSS: (f32, f32) = (0.2, 0.72);
+const PANEL_POINTS: std::ops::Range<usize> = 1..5;
+const PANEL_EVERY: usize = 6;
+/// its spine down the middle, this wide either side (m);
+const SPINE: Color = Color::srgb(0.3, 0.32, 0.36);
+const SPINE_HALF: f32 = 0.35;
+/// a band of amber across it every so many points;
+const AMBER: Color = Color::srgb(0.95, 0.7, 0.08);
+const AMBER_EVERY: usize = 30;
+/// and how wide the strips of light along its edges are (m).
+const EDGE_LIGHT: f32 = 0.3;
+/// How bright a strip of light is over its colour.
+const STRIP_GLOW: f32 = 5.0;
+/// A race track's barrier (see [`WallStyle::Barrier`]): how high it stands
+/// and its skirt reaches (m), how long the skirt's bands are (m), and
+/// where the strip of light along its top lies: how far out from the
+/// wall's face and how wide (m).
+const BARRIER_HEIGHT: f32 = 1.1;
+const BARRIER_SKIRT: f32 = 0.3;
+const BARRIER_BAND: f32 = 3.0;
+const BARRIER_LIGHT: (f32, f32) = (0.2, 0.3);
+
+/// The material of a strip of light of `color`: lit of its own.
+fn light_strip(color: Color) -> StandardMaterial {
+    StandardMaterial {
+        base_color: color,
+        emissive: color.to_linear() * STRIP_GLOW,
+        perceptual_roughness: 0.4,
+        ..default()
+    }
+}
+
 const LINE_WIDTH: f32 = 0.25;
 /// Distancia del borde del asfalto a la línea blanca lateral.
 const EDGE_LINE_INSET: f32 = 0.45;
@@ -145,6 +184,7 @@ pub fn road_pieces(
     // Huellas de derrape y frenada en las curvas para dar dinamismo al asfalto
     // (not on a toy's clean plastic, indoors).
     if scenery.soil != Soil::Floor
+        && scenery.paving == Paving::Asphalt
         && let Some(skids) = skid_marks(track)
     {
         spawn(
@@ -316,8 +356,71 @@ fn spawn_surface(
     let covered = |corners: [Vec2; 4]| corners.iter().all(|&p| road.on_other_asphalt(p));
     let indoors = scenery.soil == Soil::Floor;
     let arcade = scenery.look.voxel_size().is_some() && !indoors;
+    let plated = scenery.paving == Paving::Plates && !indoors;
     if indoors {
         spawn_toy_tracks(spawn, road, scenery, textures);
+    } else if plated {
+        let shown =
+            |index: usize, corners| (road.number == 0 || !covered(corners)) && !planked(index);
+        let plates = || StandardMaterial {
+            perceptual_roughness: 0.55,
+            reflectance: 0.5,
+            ..default()
+        };
+        // The plates, in two greys.
+        spawn(
+            ribbon(road, -half, half, 0.0, ASPHALT_TILE, |index, corners| {
+                shown(index, corners).then(|| PLATES[index / PLATE_POINTS % 2])
+            }),
+            plates(),
+        );
+        // The dark panels let into them, either side of the spine, and the
+        // spine itself.
+        let (near, far) = (PANEL_ACROSS.0 * half, PANEL_ACROSS.1 * half);
+        for (from, to) in [(near, far), (-far, -near)] {
+            spawn(
+                ribbon(road, from, to, PAINT_LIFT, 1.0, |index, corners| {
+                    (shown(index, corners) && PANEL_POINTS.contains(&(index % PANEL_EVERY)))
+                        .then_some(PANEL)
+                }),
+                plates(),
+            );
+        }
+        spawn(
+            ribbon(
+                road,
+                -SPINE_HALF,
+                SPINE_HALF,
+                PAINT_LIFT,
+                1.0,
+                |index, corners| shown(index, corners).then_some(SPINE),
+            ),
+            plates(),
+        );
+        // A band of amber across, every so often.
+        spawn(
+            ribbon(
+                road,
+                -half,
+                half,
+                2.0 * PAINT_LIFT,
+                1.0,
+                |index, corners| {
+                    (shown(index, corners) && index % AMBER_EVERY == 0).then_some(AMBER)
+                },
+            ),
+            plates(),
+        );
+        // The strips of light along its edges.
+        let edge = half - EDGE_LINE_INSET;
+        for (from, to) in [(edge - EDGE_LIGHT, edge), (-edge, -edge + EDGE_LIGHT)] {
+            spawn(
+                ribbon(road, from, to, 2.0 * PAINT_LIFT, 1.0, |index, corners| {
+                    shown(index, corners).then_some(Color::WHITE)
+                }),
+                light_strip(scenery.curbs[0]),
+            );
+        }
     } else if arcade {
         // Flat, in bands of two greys.
         spawn(
@@ -357,8 +460,9 @@ fn spawn_surface(
         let middle = corners.iter().sum::<Vec2>() / 4.0;
         !road.on_other_asphalt(middle)
     };
-    let white =
-        |index, corners| (clear(corners) && !planked(index) && !indoors).then_some(Color::WHITE);
+    let white = |index, corners| {
+        (clear(corners) && !planked(index) && !indoors && !plated).then_some(Color::WHITE)
+    };
     let edge = half - EDGE_LINE_INSET;
     spawn(
         ribbon(road, edge - LINE_WIDTH, edge, PAINT_LIFT, 1.0, white),
@@ -369,7 +473,11 @@ fn spawn_surface(
         painted(),
     );
     let dashes = |index: usize, corners| {
-        (index % (DASH.0 + DASH.1) < DASH.0 && clear(corners) && !planked(index) && !indoors)
+        (index % (DASH.0 + DASH.1) < DASH.0
+            && clear(corners)
+            && !planked(index)
+            && !indoors
+            && !plated)
             .then_some(Color::WHITE)
     };
     let center = LINE_WIDTH / 2.0;
@@ -489,6 +597,13 @@ fn spawn_surface(
                 ..default()
             },
         ),
+        (
+            WallStyle::Barrier,
+            StandardMaterial {
+                perceptual_roughness: 0.5,
+                ..default()
+            },
+        ),
     ] {
         let banded = arcade && arcade_wall_color(wanted, 0, 0.0).is_some();
         let mesh = walls(road, terrain, wanted, banded, |index, side| {
@@ -504,6 +619,19 @@ fn spawn_surface(
         };
         if let Some(mesh) = mesh {
             spawn(mesh, material);
+        }
+    }
+    // The strip of light along the top of a race track's barriers.
+    let top = line.wall() + BARRIER_LIGHT.0;
+    for (side, from, to) in [
+        (Side::Left, top, top + BARRIER_LIGHT.1),
+        (Side::Right, -top - BARRIER_LIGHT.1, -top),
+    ] {
+        let strip = ribbon(road, from, to, BARRIER_HEIGHT + 0.012, 1.0, |index, _| {
+            (style(index, side) == Some(WallStyle::Barrier)).then_some(Color::WHITE)
+        });
+        if strip.count_vertices() > 0 {
+            spawn(strip, light_strip(scenery.curbs[0]));
         }
     }
     // The see-through ones: the seafront's painted railing, a shrine's
@@ -639,6 +767,7 @@ pub fn wall_style(scenery: &Scenery, lap: f32, along: f32, side: Side) -> Option
             }
             BridgeStyle::Wooden | BridgeStyle::OldWooden => None,
             // A toy track's own borders.
+            BridgeStyle::Skyway => Some(WallStyle::Barrier),
             BridgeStyle::SlotTrack => Some(WallStyle::SlotBorder),
             BridgeStyle::OrangeTrack => Some(WallStyle::OrangeEdge),
             BridgeStyle::Slide => Some(WallStyle::ChuteSide),
@@ -786,6 +915,21 @@ fn profile(style: WallStyle) -> Profile {
                 (WALL_THICKNESS, foot),
             ],
             0.06,
+            4,
+            Vec2::splat(WALL_TILE),
+        ),
+        WallStyle::Barrier => (
+            &[
+                (0.0, foot),
+                (0.0, 0.12),
+                (0.1, BARRIER_SKIRT),
+                (0.1, BARRIER_HEIGHT - 0.08),
+                (0.18, BARRIER_HEIGHT),
+                (WALL_THICKNESS - 0.08, BARRIER_HEIGHT),
+                (WALL_THICKNESS, BARRIER_HEIGHT - 0.08),
+                (WALL_THICKNESS, foot),
+            ],
+            0.03,
             4,
             Vec2::splat(WALL_TILE),
         ),
@@ -956,6 +1100,18 @@ fn wall_tint(style: WallStyle, p: Vec3, up: f32) -> Color {
                 &Color::srgb(0.5 * shade, 0.62 * shade, 0.36 * shade),
                 0.55 * moss,
             )
+        }
+        // Dark panels, lighter at the cap, the skirt banded in amber.
+        WallStyle::Barrier => {
+            if up > BARRIER_HEIGHT - 0.1 {
+                Color::srgb(0.34, 0.36, 0.4)
+            } else if up < BARRIER_SKIRT
+                && ((p.x + p.z) / BARRIER_BAND).floor().rem_euclid(2.0) < 1.0
+            {
+                AMBER
+            } else {
+                Color::srgb(0.11, 0.12, 0.15)
+            }
         }
         WallStyle::Hedge => {
             let inside = 0.6 + 0.4 * smoothstep(0.0, 1.1, up);
@@ -1810,6 +1966,7 @@ pub mod tests {
                     BridgeStyle::RedArches | BridgeStyle::Truss => {
                         assert_eq!(wall, Some(WallStyle::Concrete))
                     }
+                    BridgeStyle::Skyway => assert_eq!(wall, Some(WallStyle::Barrier)),
                     // A dam's crest: a low parapet over the lake, a barrier
                     // over the drop on the other side.
                     BridgeStyle::Dam => {

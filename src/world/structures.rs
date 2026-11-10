@@ -290,28 +290,33 @@ pub fn structure_pieces(
             ));
             continue;
         }
-        let (deck, steel) = if bridge.style == BridgeStyle::Truss {
-            truss_bridge_meshes(track, terrain, &indices)
-        } else {
-            bridge_meshes(track, terrain, &indices)
+        let (deck, steel) = match bridge.style {
+            BridgeStyle::Truss => truss_bridge_meshes(track, terrain, &indices),
+            BridgeStyle::Skyway => skyway_meshes(track, terrain, &indices),
+            _ => bridge_meshes(track, terrain, &indices),
         };
         pieces.push((
             deck,
             StandardMaterial {
-                base_color: Color::srgb(0.7, 0.7, 0.68),
+                base_color: match bridge.style {
+                    BridgeStyle::Skyway => SKYWAY_DECK,
+                    _ => Color::srgb(0.7, 0.7, 0.68),
+                },
                 base_color_texture: Some(textures.plaster.clone()),
                 perceptual_roughness: 0.9,
                 ..default()
             },
         ));
-        pieces.push((
-            steel,
-            StandardMaterial {
-                perceptual_roughness: 0.45,
-                metallic: 0.2,
-                ..default()
-            },
-        ));
+        if steel.count_vertices() > 0 {
+            pieces.push((
+                steel,
+                StandardMaterial {
+                    perceptual_roughness: 0.45,
+                    metallic: 0.2,
+                    ..default()
+                },
+            ));
+        }
     }
     // What the circuit's themes build (see `super::themes`).
     for (_, theme) in scenery.themes.iter() {
@@ -908,6 +913,23 @@ fn concrete_deck(
         }
     }
     deck
+}
+
+/// A skyway's deck, darker than a bridge's concrete, and how many points of
+/// the lap apart its pylons stand.
+const SKYWAY_DECK: Color = Color::srgb(0.3, 0.32, 0.36);
+const SKYWAY_PIER_EVERY: usize = 24;
+
+/// A skyway: its deck on pairs of pylons every so often, and nothing more
+/// (the second mesh is empty).
+fn skyway_meshes(track: &Track, terrain: &Terrain, indices: &[usize]) -> (Mesh, Mesh) {
+    let last = indices.len() - 1;
+    let piers: Vec<usize> = (0..=last)
+        .step_by(SKYWAY_PIER_EVERY)
+        .chain(std::iter::once(last))
+        .collect();
+    let deck = concrete_deck(track, terrain, indices, &piers);
+    (deck.build(), MeshBuilder::default().build())
 }
 
 /// A steel truss bridge: a concrete deck (the first mesh) on piers, and two
@@ -1526,6 +1548,7 @@ pub mod tests {
                     | BridgeStyle::Slide => continue,
                     BridgeStyle::RedArches => bridge_meshes(&track, &terrain, &indices),
                     BridgeStyle::Truss => truss_bridge_meshes(&track, &terrain, &indices),
+                    BridgeStyle::Skyway => skyway_meshes(&track, &terrain, &indices),
                     // A dam's crest is the dam's own concrete.
                     BridgeStyle::Dam => {
                         let dam = scenery
