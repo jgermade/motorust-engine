@@ -23,6 +23,7 @@ pub use loop_ride::Ride;
 use bevy::input::gamepad::{GamepadRumbleIntensity, GamepadRumbleRequest};
 use bevy::{ecs::system::SystemParam, prelude::*};
 
+use crate::circuits::{Circuits, CurrentCircuit};
 use crate::geometry::{approach, forward, heading_of, smoothstep, to_world, wrap_angle};
 use crate::lobby::{ControllerBinding, LocalPlayersConfig};
 use crate::locale::Language;
@@ -136,6 +137,29 @@ pub const STOPPED_LEAN: f32 = -0.12;
 /// Por debajo de esta velocidad la moto se inclina en parado y el piloto baja el pie (m/s).
 pub const STOPPED_SPEED: f32 = 2.5;
 
+/// A hover bike's drift (see [`BikeTuning::hover`]): what pulls a wheelie
+/// on a bike with wheels, held into a bend, swings its nose into the bend
+/// up to this angle (rad) while it slides round it.
+pub const DRIFT_ANGLE: f32 = 0.42;
+/// The steering from which it drifts all out: less of it, less of a drift;
+/// none, none (on a straight it does nothing).
+const DRIFT_STEER: f32 = 0.35;
+/// The speeds between which the drift comes in (m/s): none at a walking
+/// pace, all of it at the pace of a bend.
+const DRIFT_SPEEDS: (f32, f32) = (12.0, 30.0);
+/// How fast the nose swings into the bend, and back once let go (1/s).
+const DRIFT_IN: f32 = 7.0;
+const DRIFT_OUT: f32 = 5.0;
+/// Drifting all out, how much tighter the bike turns flat out (a share of
+/// its grip);
+const DRIFT_TURN: f32 = 0.3;
+/// how much it is spared of what holding the steering at its limit costs
+/// (the engine's cut and the scrub, see [`CORNER_SCRUB`]);
+const DRIFT_SPARES: f32 = 0.7;
+/// and what sliding costs it instead (m/s²): a drift pays in a tight bend,
+/// not in a gentle one.
+const DRIFT_DRAG: f32 = 5.0;
+
 pub struct BikePlugin;
 
 impl Plugin for BikePlugin {
@@ -154,7 +178,7 @@ impl Plugin for BikePlugin {
         .add_message::<RecallToGrid>()
         .init_resource::<SplitChoices>()
         .add_systems(OnEnter(GameState::Race), spawn_grid)
-        .add_systems(Update, follow_gears)
+        .add_systems(Update, (follow_gears, follow_circuit))
         .add_systems(
             FixedUpdate,
             (
@@ -417,6 +441,9 @@ pub struct BikeState {
     /// change up it is in still lasts (s).
     pub gear: usize,
     pub shift: f32,
+    /// How far a hover bike's nose is swung into the bend, drifting (rad,
+    /// positive to the left, up to [`DRIFT_ANGLE`]): nought on wheels.
+    pub drift: f32,
 }
 
 impl BikeState {
@@ -441,7 +468,13 @@ impl BikeState {
             lean_rate: 0.0,
             gear: 0,
             shift: 0.0,
+            drift: 0.0,
         }
+    }
+
+    /// How much of all it can a hover bike is drifting (0 to 1).
+    pub fn sliding(&self) -> f32 {
+        (self.drift.abs() / DRIFT_ANGLE).min(1.0)
     }
 
     /// Parada en una posición del circuito, sobre el asfalto.
@@ -449,6 +482,15 @@ impl BikeState {
         Self {
             elevation: track.road_height(pose.0),
             ..Self::parked_at(pose)
+        }
+    }
+
+    /// As it stands parked where the bikes hover (`hover`) or roll: level,
+    /// or leaning on a foot.
+    pub fn standing(self, hover: bool) -> Self {
+        Self {
+            lean: parked_lean(hover),
+            ..self
         }
     }
 
@@ -549,6 +591,11 @@ pub struct BikeTuning {
     /// up, and each gear strongest at the revs it pulls best (see
     /// [`gearbox`]). Off, the engine drives as if it had none.
     pub gears: bool,
+    /// Whether the bikes hover, as the circuit says (see
+    /// [`crate::circuits::Circuit::hover`]): what pulls a wheelie on wheels
+    /// drifts instead (see [`DRIFT_ANGLE`]), and stopped they stand level,
+    /// with no foot down.
+    pub hover: bool,
 }
 
 impl Default for BikeTuning {
@@ -571,6 +618,7 @@ impl Default for BikeTuning {
             lean_in_response: 16.0,
             lean_response: 7.0,
             gears: false,
+            hover: false,
         }
     }
 }
@@ -589,10 +637,31 @@ impl BikeTuning {
     }
 }
 
+/// How a bike leans stopped (rad): on its rider's foot, or, one that
+/// hovers, not at all: it stands level by itself.
+pub fn parked_lean(hover: bool) -> f32 {
+    if hover { 0.0 } else { STOPPED_LEAN }
+}
+
 /// The bikes change gears as Options > Game says.
 fn follow_gears(settings: Res<Settings>, mut tuning: ResMut<BikeTuning>) {
     if tuning.gears != settings.gears {
         tuning.gears = settings.gears;
+    }
+}
+
+/// The bikes hover where the circuit chosen says they do.
+fn follow_circuit(
+    circuits: Option<Res<Circuits>>,
+    current: Option<Res<CurrentCircuit>>,
+    mut tuning: ResMut<BikeTuning>,
+) {
+    let (Some(circuits), Some(current)) = (circuits, current) else {
+        return;
+    };
+    let hover = circuits.get(*current).hover;
+    if tuning.hover != hover {
+        tuning.hover = hover;
     }
 }
 
@@ -636,6 +705,8 @@ pub fn step(
     let contact = if state.grounded { 1.0 } else { 0.0 };
     let throttle = input.throttle.clamp(0.0, 1.0) * contact;
     let brake = input.brake.clamp(0.0, 1.0) * contact;
+    // How much a hover bike is drifting, of all it can (none in the air).
+    let sliding = state.sliding() * contact;
     // La hierba frena poco a poco: la punta baja según lo que se lleva en ella.
     // Dirt does the same; the concrete or planks of a tunnel or a bridge
     // are as firm as the road.
@@ -656,7 +727,8 @@ pub fn step(
     // apurar, con la dirección a tope, el motor empuja menos y la moto frena
     // (más abajo) para cerrar la curva.
     let steer = state.steer.abs();
-    let at_limit = smoothstep(CORNER_LOSS_FROM, 1.0, steer);
+    // Drifting, most of that is spared: the slide turns the bike.
+    let at_limit = smoothstep(CORNER_LOSS_FROM, 1.0, steer) * (1.0 - DRIFT_SPARES * sliding);
     let corner_power = 1.0 + CORNER_DRIVE * (steer / CORNER_GRIP_FROM).min(1.0) * (1.0 - at_limit)
         - CORNER_POWER_CUT * at_limit;
     // Con un caballito empuja algo más.
@@ -694,6 +766,7 @@ pub fn step(
         resistance += tuning.overspeed_drag;
     }
     resistance += CORNER_SCRUB * at_limit * smoothstep(25.0, 60.0, speed) * contact;
+    resistance += DRIFT_DRAG * sliding;
     speed = move_toward(speed, 0.0, resistance * dt);
     // A booster under it drives it on, hard, up to its speed; never slows it.
     if ground.booster > 0.0 && state.grounded {
@@ -726,13 +799,33 @@ pub fn step(
             1.0 + BRAKE_GRIP * state.chassis.front_load()
         }
         // Banked track that grips harder (the toy cars').
-        * ground.grip;
+        * ground.grip
+        // A hover bike drifting turns tighter.
+        * (1.0 + DRIFT_TURN * sliding);
     let max_yaw_rate = tuning.max_yaw_rate_with_grip(speed, corner_grip);
     // Con una rueda en el aire apenas se puede girar.
     let grip = state.chassis.steering_grip();
     let traction = if state.grounded { 1.0 } else { AIR_STEERING };
     let yaw_rate = steer * max_yaw_rate * speed.signum() * traction * grip;
     let heading = state.heading + yaw_rate * dt;
+
+    // A hover bike's drift: held into a bend at speed, the nose swings into
+    // it, and back when it is let go or the bend ends.
+    let drift_target = if tuning.hover && state.grounded {
+        DRIFT_ANGLE
+            * input.wheelie.clamp(0.0, 1.0)
+            * smoothstep(DRIFT_SPEEDS.0, DRIFT_SPEEDS.1, speed)
+            * (steer / DRIFT_STEER).clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    let swinging_out = drift_target.abs() > state.drift.abs() && drift_target * state.drift >= 0.0;
+    let drift = approach(
+        state.drift,
+        drift_target,
+        if swinging_out { DRIFT_IN } else { DRIFT_OUT },
+        dt,
+    );
 
     // Inclinación según cuánto agarre pide la curva: poco giro, poca
     // inclinación, y del todo solo al apurar. (La de equilibrio frente a la
@@ -754,7 +847,8 @@ pub fn step(
         }
         None => tuning.max_lean * grip_used.abs().powf(LEAN_CURVE).copysign(grip_used),
     };
-    let target_lean = dynamic_lean * (1.0 - stopped) + STOPPED_LEAN * stopped;
+    let stopped_lean = parked_lean(tuning.hover);
+    let target_lean = dynamic_lean * (1.0 - stopped) + stopped_lean * stopped;
     // Se tumba deprisa y se levanta suave. Al cambiar de lado en una curva,
     // también se tumba deprisa hacia el lado contrario.
     let leaning_in = (target_lean.abs() > state.lean.abs() && target_lean * state.lean >= 0.0)
@@ -798,7 +892,12 @@ pub fn step(
 
     let chassis = state.chassis.step(
         &Forces {
-            pull: input.wheelie.clamp(0.0, 1.0),
+            // A hover bike has no wheel to lift: it drifts instead.
+            pull: if tuning.hover {
+                0.0
+            } else {
+                input.wheelie.clamp(0.0, 1.0)
+            },
             brake,
             throttle,
             power,
@@ -824,6 +923,7 @@ pub fn step(
         swinging,
         gear,
         shift,
+        drift,
         pitch: approach(state.pitch, target_pitch, PITCH_RESPONSE, dt),
         accel,
         chassis,
@@ -1063,6 +1163,11 @@ pub struct Entry {
     #[serde(deserialize_with = "crate::circuits::data::srgba")]
     pub color: Srgba,
     design: Design,
+    /// Its design where the bikes hover (see
+    /// [`crate::circuits::Circuit::hover`]), if it has one: a model that
+    /// hovers (see [`model::hover`]).
+    #[serde(default)]
+    hover: Option<Design>,
     /// Its livery, by name (see [`livery`]).
     #[serde(deserialize_with = "livery")]
     livery: &'static Livery,
@@ -1072,6 +1177,20 @@ impl Entry {
     /// Its design: built in code, or a model.
     pub fn design(&self) -> model::Design {
         self.design
+    }
+
+    /// Its design where the bikes hover, if it has one.
+    pub fn hover_design(&self) -> Option<model::Design> {
+        self.hover
+    }
+
+    /// Its design on a circuit whose bikes hover (`hover`) or roll: the
+    /// one that hovers there if it has one, else its own.
+    pub fn design_on(&self, hover: bool) -> model::Design {
+        match self.hover {
+            Some(design) if hover => design,
+            _ => self.design,
+        }
     }
 
     pub fn description(&self, lang: Language) -> &'static str {
@@ -1129,6 +1248,21 @@ impl Roster {
                 "{name}: {} bikes, not one for each of the {RIDERS} places on the grid",
                 entries.len()
             ));
+        }
+        // What hovers is a model that hovers, and nothing else is.
+        for entry in &entries {
+            if entry.design.hovers() {
+                return Err(format!(
+                    "{name}: {}'s design hovers: that is its `hover`",
+                    entry.name
+                ));
+            }
+            if entry.hover.is_some_and(|design| !design.hovers()) {
+                return Err(format!(
+                    "{name}: {}'s `hover` is not a model that hovers",
+                    entry.name
+                ));
+            }
         }
         Ok(Roster(Vec::leak(entries)))
     }
@@ -1239,8 +1373,15 @@ pub struct BikeAssets<'w> {
 }
 
 impl BikeAssets<'_> {
-    /// Crea una moto de [`ROSTER`] parada en `state`, con su piloto.
-    pub fn spawn(&mut self, commands: &mut Commands, entry: &Entry, state: BikeState) -> Entity {
+    /// Crea una moto de [`ROSTER`] parada en `state`, con su piloto: the one
+    /// of its that hovers, if it has one, where the bikes do (`hover`).
+    pub fn spawn(
+        &mut self,
+        commands: &mut Commands,
+        entry: &Entry,
+        state: BikeState,
+        hover: bool,
+    ) -> Entity {
         let bike = commands
             .spawn((
                 state,
@@ -1259,7 +1400,7 @@ impl BikeAssets<'_> {
             commands,
             bike,
             &self.blueprint,
-            entry.design(),
+            entry.design_on(hover),
             entry.livery,
             &mut self.meshes,
             &mut self.materials,
@@ -1294,8 +1435,10 @@ fn spawn_grid(
     game_mode: Res<GameMode>,
     settings: Res<Settings>,
     rules: Option<Res<crate::race::Rules>>,
+    (circuits, current): (Res<Circuits>, Res<CurrentCircuit>),
 ) {
     race.started = false;
+    let hover = circuits.get(*current).hover;
     let alone = learning::learning_line(&settings, rules.as_deref(), *game_mode).is_some();
     let roster_indices = if *game_mode == GameMode::SplitScreen {
         if let Some(split) = split_choices {
@@ -1310,8 +1453,8 @@ fn spawn_grid(
         if alone && rival.is_some() {
             continue;
         }
-        let state = BikeState::parked_on(&track, start_pose(&track, slot));
-        let bike = assets.spawn(&mut commands, &roster[entry], state);
+        let state = BikeState::parked_on(&track, start_pose(&track, slot)).standing(hover);
+        let bike = assets.spawn(&mut commands, &roster[entry], state, hover);
         let mut bike = commands.entity(bike);
         bike.insert((
             GridPosition(slot),
@@ -2325,7 +2468,9 @@ fn interpolate_bikes(
     for (child_of, mut transform) in &mut pivots {
         if let Ok((state, previous, _)) = bikes.get(child_of.parent()) {
             let lean = previous.0.lean.lerp(state.lean, alpha);
-            transform.rotation = Quat::from_rotation_z(lean);
+            // Drifting, a hover bike's nose is swung into the bend.
+            let drift = previous.0.drift.lerp(state.drift, alpha);
+            transform.rotation = Quat::from_rotation_y(drift) * Quat::from_rotation_z(lean);
         }
     }
 }
@@ -3638,6 +3783,121 @@ pub mod tests {
         let braked = drive(braking, Surface::Asphalt, 0.5, moving);
         assert!(braked.accel < -20.0);
         assert!(braked.chassis.squat < -0.04, "morro hundido");
+    }
+
+    /// A hover bike's tuning (see [`BikeTuning::hover`]).
+    fn hovering() -> BikeTuning {
+        BikeTuning {
+            hover: true,
+            ..default()
+        }
+    }
+
+    #[test]
+    fn a_hover_bike_drifts_with_what_pulls_a_wheelie_and_never_lifts_its_nose() {
+        let flat = Ground::flat(Surface::Asphalt);
+        let ride = |tuning: &BikeTuning, input: BikeInput, state: BikeState, seconds: f32| {
+            (0..(seconds / DT) as usize)
+                .fold(state, |state, _| step(&state, &input, &flat, tuning, DT))
+        };
+        let fast = BikeState {
+            speed: 60.0,
+            ..parked()
+        };
+        let turning = |wheelie: f32, steer: f32| BikeInput {
+            throttle: 1.0,
+            steer,
+            wheelie,
+            ..default()
+        };
+        // Held into a bend, its nose swings into it, up to its angle, the
+        // way it turns; and no wheel comes up.
+        let left = ride(&hovering(), turning(1.0, 1.0), fast, 1.0);
+        assert!((left.drift - DRIFT_ANGLE).abs() < 0.02, "{}", left.drift);
+        assert!(left.sliding() > 0.95);
+        assert!(left.chassis.wheelie < 0.1 * chassis::MAX_WHEELIE);
+        let right = ride(&hovering(), turning(1.0, -1.0), fast, 1.0);
+        assert!((right.drift + DRIFT_ANGLE).abs() < 0.02);
+        // It comes in smoothly, and goes once let go.
+        let begun = ride(&hovering(), turning(1.0, 1.0), fast, 0.1);
+        assert!(begun.drift > 0.05 && begun.drift < 0.8 * DRIFT_ANGLE);
+        let let_go = ride(&hovering(), turning(0.0, 1.0), left, 1.0);
+        assert!(let_go.drift.abs() < 0.01, "{}", let_go.drift);
+        // On a straight it does nothing, nor at a walking pace, nor in the
+        // air.
+        let straight = ride(&hovering(), turning(1.0, 0.0), fast, 1.0);
+        assert!(straight.drift.abs() < 1e-3 && straight.speed > fast.speed);
+        let slow = BikeState {
+            speed: 8.0,
+            ..parked()
+        };
+        let crawling = BikeInput {
+            throttle: 0.0,
+            ..turning(1.0, 1.0)
+        };
+        assert!(ride(&hovering(), crawling, slow, 0.3).drift.abs() < 1e-3);
+        let flying = BikeState {
+            grounded: false,
+            ..fast
+        };
+        let airborne = step(&flying, &turning(1.0, 1.0), &flat, &hovering(), DT);
+        assert_eq!(airborne.drift, 0.0);
+        // On wheels the same button pulls a wheelie, and nothing drifts.
+        let wheels = ride(&BikeTuning::default(), turning(1.0, 0.0), fast, 1.0);
+        assert_eq!(wheels.drift, 0.0);
+        assert!(wheels.chassis.wheelie > 0.2);
+        let cornering = ride(&BikeTuning::default(), turning(1.0, 1.0), fast, 1.0);
+        assert_eq!(cornering.drift, 0.0);
+    }
+
+    #[test]
+    fn drifting_turns_a_hover_bike_tighter_and_keeps_more_of_its_speed_at_full_lock() {
+        let flat = Ground::flat(Surface::Asphalt);
+        let tuning = hovering();
+        let round = |wheelie: f32, steer: f32| {
+            let input = BikeInput {
+                throttle: 1.0,
+                steer,
+                wheelie,
+                ..default()
+            };
+            let from = BikeState {
+                speed: 65.0,
+                ..parked()
+            };
+            (0..(1.5 / DT) as usize).fold(from, |state, _| step(&state, &input, &flat, &tuning, DT))
+        };
+        // At full lock: further round the bend in the same time, and faster
+        // at the end of it.
+        let (gripping, drifting) = (round(0.0, 1.0), round(1.0, 1.0));
+        assert!(
+            drifting.heading > 1.1 * gripping.heading,
+            "{} {}",
+            drifting.heading,
+            gripping.heading
+        );
+        assert!(
+            drifting.speed > gripping.speed + 3.0,
+            "{} {}",
+            drifting.speed,
+            gripping.speed
+        );
+        // In a gentle bend it only costs: a drift is for the tight ones.
+        let (gentle, sliding) = (round(0.0, 0.3), round(1.0, 0.3));
+        assert!(sliding.speed < gentle.speed - 1.0);
+    }
+
+    #[test]
+    fn a_hover_bike_stands_level_when_stopped() {
+        let flat = Ground::flat(Surface::Asphalt);
+        let parked = parked().standing(true);
+        assert_eq!(parked.lean, 0.0);
+        let still = (0..240).fold(parked, |state, _| {
+            step(&state, &BikeInput::default(), &flat, &hovering(), DT)
+        });
+        assert!(still.lean.abs() < 1e-4);
+        // One with wheels leans on its rider's foot, as ever.
+        assert_eq!(super::parked_lean(false), STOPPED_LEAN);
     }
 
     #[test]

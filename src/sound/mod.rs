@@ -445,7 +445,10 @@ fn place_sounds(
         };
         params.rpm.set(engine.rpm * doppler);
         params.load.set(engine.load);
-        params.wheelie.set(state.chassis.wheelie_lift());
+        // A hover bike's drift roars as a wheelie does.
+        params
+            .wheelie
+            .set(state.chassis.wheelie_lift().max(state.sliding()));
 
         // Al reiniciar la carrera las motos saltan a la parrilla: eso no es
         // un golpe.

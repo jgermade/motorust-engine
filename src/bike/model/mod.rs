@@ -17,6 +17,7 @@
 //! las dos ruedas.
 
 pub mod designs;
+pub mod hover;
 pub mod imported;
 mod livery;
 pub mod pilot;
@@ -115,6 +116,7 @@ impl Plugin for BikeModelPlugin {
             (
                 spin_wheels,
                 brake_light,
+                hover::light_pads,
                 (
                     (steer_front, rider::hang_off, rider::sit_up),
                     (
@@ -284,6 +286,9 @@ struct Body {
     /// Si la horquilla y el manillar giran con la dirección.
     steers: bool,
     pilot: Option<pilot::PilotBlueprint>,
+    /// If it hovers (see [`hover`]), the material of the pools of light
+    /// under its pads.
+    hover: Option<Handle<StandardMaterial>>,
 }
 
 /// Mallas de la moto y el piloto, compartidas por todas las motos.
@@ -300,6 +305,8 @@ pub struct BikeBlueprint {
     ball: Handle<Mesh>,
     /// Pose de reposo del esqueleto del piloto.
     rider_bindposes: Handle<SkinnedMeshInverseBindposes>,
+    /// What the pools of light under the hover bikes' pads share.
+    glow: hover::GlowParts,
 }
 
 impl FromWorld for BikeBlueprint {
@@ -325,6 +332,10 @@ impl FromWorld for BikeBlueprint {
         // Every design: the roster read first, which names the models.
         world.init_resource::<crate::bike::Roster>();
         let designs = Design::all();
+        let glow = hover::GlowParts::new(world);
+        // Each rider once, whichever models carry them (a bike and the
+        // version of it that hovers), by their folder.
+        let mut riders: Vec<(&'static str, pilot::PilotBlueprint)> = Vec::new();
         let mut imports: Vec<_> = designs
             .iter()
             .copied()
@@ -333,6 +344,20 @@ impl FromWorld for BikeBlueprint {
                     let body =
                         imported::material(model, &mut world.resource_mut::<Assets<Image>>());
                     let body = world.resource_mut::<Assets<StandardMaterial>>().add(body);
+                    let pads = model.hover.as_ref().map(|hover| {
+                        world
+                            .resource_mut::<Assets<StandardMaterial>>()
+                            .add(glow.material(hover))
+                    });
+                    let rider = model.rider_folder();
+                    let pilot = match riders.iter().find(|(folder, _)| *folder == rider) {
+                        Some((_, pilot)) => pilot.clone(),
+                        None => {
+                            let pilot = pilot::PilotBlueprint::new(world, model);
+                            riders.push((rider, pilot.clone()));
+                            pilot
+                        }
+                    };
                     let compound = tyre::Compound::of(design);
                     let materials = imported::Materials {
                         body,
@@ -343,7 +368,7 @@ impl FromWorld for BikeBlueprint {
                             .expect("every compound has its material")]
                         .clone(),
                     };
-                    (model, materials, pilot::PilotBlueprint::new(world, model))
+                    (model, materials, pilot, pads)
                 })
             })
             .collect();
@@ -365,16 +390,16 @@ impl FromWorld for BikeBlueprint {
             .into_iter()
             .zip(imports.iter_mut())
             .map(|(design, import)| {
-                let (pilot, steers) = match import.take() {
-                    Some((model, materials, pilot)) => {
+                let (pilot, steers, hover) = match import.take() {
+                    Some((model, materials, pilot, pads)) => {
                         parts.geometry = model.geometry;
                         imported::build(&mut parts, model, &materials);
-                        (Some(pilot), model.steers)
+                        (Some(pilot), model.steers, pads)
                     }
                     None => {
                         parts.geometry = STANDARD;
                         designs::build(&mut parts, design);
-                        (None, true)
+                        (None, true, None)
                     }
                 };
                 Body {
@@ -384,6 +409,7 @@ impl FromWorld for BikeBlueprint {
                     procedural: pilot.is_none(),
                     steers,
                     pilot,
+                    hover,
                 }
             })
             .collect();
@@ -395,6 +421,7 @@ impl FromWorld for BikeBlueprint {
             cube,
             ball,
             rider_bindposes,
+            glow,
         }
     }
 }
@@ -797,6 +824,9 @@ pub fn spawn(
             rear_wheel,
         },
     ));
+    if let Some(pads) = &bodywork.hover {
+        hover::spawn(commands, bike, &geometry, &blueprint.glow, pads);
+    }
     let rider = bodywork
         .procedural
         .then(|| rider::spawn_pivots(commands, bike, rider_mount, geometry));
@@ -912,13 +942,22 @@ fn pivot(commands: &mut Commands, parent: Entity, origin: Vec3, role: impl Bundl
 /// Coloca el chasis según el caballito y la suspensión del estado físico
 /// (interpolado entre pasos), y las ruedas para que sigan en el suelo aunque
 /// el chasis se hunda o se levante.
+#[allow(clippy::type_complexity)]
 fn move_chassis(
     fixed: Res<Time<Fixed>>,
-    bikes: Query<(&BikeState, &PreviousBikeState, &ChassisRig, &Geometry)>,
+    time: Res<Time>,
+    bikes: Query<(
+        &BikeState,
+        &PreviousBikeState,
+        &ChassisRig,
+        &Geometry,
+        Option<&hover::Hovering>,
+        Option<&CrashState>,
+    )>,
     mut transforms: Query<&mut Transform>,
 ) {
     let alpha = fixed.overstep_fraction();
-    for (state, previous, rig, geometry) in &bikes {
+    for (state, previous, rig, geometry, hovering, crash) in &bikes {
         let (from, to) = (&previous.0.chassis, &state.chassis);
         let wheelie = from.wheelie.lerp(to.wheelie, alpha);
         let squat = from.squat.lerp(to.squat, alpha);
@@ -928,6 +967,13 @@ fn move_chassis(
         let droop = |s: &BikeState| if s.grounded { 0.0 } else { s.chassis.heave };
         let lift = lift(&previous.0).lerp(lift(state), alpha);
         let droop = droop(&previous.0).lerp(droop(state), alpha);
+        // A hover bike bobs over the road, but lying on it after a fall.
+        let lift = lift
+            + hovering
+                .filter(|_| !crash.is_some_and(|crash| crash.is_down()))
+                .map_or(0.0, |hovering| {
+                    hover::bob(time.elapsed_secs(), state.speed, hovering.phase)
+                });
 
         // El caballito gira sobre el punto de apoyo de la rueda que sigue en el suelo.
         let contact = Vec3::Z

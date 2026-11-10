@@ -251,7 +251,12 @@ pub fn menu_prompts(device: ActiveDevice, hints: &[(Keys, &str)]) -> Vec<KeyProm
 }
 
 /// The legend of the race, with the keys or buttons the player has chosen.
-pub fn race_prompts(device: ActiveDevice, lang: Language, controls: &Controls) -> Vec<KeyPrompt> {
+pub fn race_prompts(
+    device: ActiveDevice,
+    lang: Language,
+    controls: &Controls,
+    hover: bool,
+) -> Vec<KeyPrompt> {
     let first = |action: Action| -> Vec<Badge> {
         let binding = controls.get(action);
         match device {
@@ -273,7 +278,15 @@ pub fn race_prompts(device: ActiveDevice, lang: Language, controls: &Controls) -
         (first(Action::Throttle), lang.action_throttle()),
         (first(Action::Brake), lang.hint_brake()),
         (steer, lang.hint_steer()),
-        (first(Action::Wheelie), lang.action_wheelie()),
+        // What pulls a wheelie on wheels drifts where the bikes hover.
+        (
+            first(Action::Wheelie),
+            if hover {
+                lang.action_drift()
+            } else {
+                lang.action_wheelie()
+            },
+        ),
         (first(Action::Restart), lang.restart()),
         (first(Action::Pause), lang.action_pause()),
     ];
@@ -835,11 +848,11 @@ mod tests {
         let mut controls = Controls::default();
         for lang in [Language::Spanish, Language::English] {
             for device in DEVICES {
-                let prompts = race_prompts(device, lang, &controls);
+                let prompts = race_prompts(device, lang, &controls, false);
                 assert!(drawable(&prompts), "{device:?}: {prompts:?}");
             }
         }
-        let keyboard = race_prompts(ActiveDevice::Keyboard, Language::Spanish, &controls);
+        let keyboard = race_prompts(ActiveDevice::Keyboard, Language::Spanish, &controls, false);
         let wheelie = keyboard
             .iter()
             .find(|p| p.action == "Caballito")
@@ -848,10 +861,19 @@ mod tests {
 
         controls.remap(KeyCode::Space, &[KeyCode::KeyJ]);
         controls.remap(GamepadButton::RightTrigger2, &[GamepadButton::RightTrigger]);
-        let keyboard = race_prompts(ActiveDevice::Keyboard, Language::English, &controls);
+        let keyboard = race_prompts(ActiveDevice::Keyboard, Language::English, &controls, false);
         let wheelie = keyboard.iter().find(|p| p.action == "Wheelie").unwrap();
         assert_eq!(wheelie.badges[0].label, Label::Text("J".into()));
-        let pad = race_prompts(ActiveDevice::PlayStation, Language::English, &controls);
+        // Where the bikes hover, the same key drifts.
+        let hovering = race_prompts(ActiveDevice::Keyboard, Language::English, &controls, true);
+        assert!(hovering.iter().any(|p| p.action == "Drift"));
+        assert!(!hovering.iter().any(|p| p.action == "Wheelie"));
+        let pad = race_prompts(
+            ActiveDevice::PlayStation,
+            Language::English,
+            &controls,
+            false,
+        );
         assert_eq!(pad[0].action, "Throttle");
         assert_eq!(pad[0].badges[0].label, Label::Text("R1".into()));
         // The sound: Select held with the top face button on a gamepad.

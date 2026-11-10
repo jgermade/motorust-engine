@@ -438,9 +438,13 @@ fn show_race_legend(
         active_controller.as_deref(),
     );
     let lang = settings.language;
+    let hover = match (&circuit, &circuits) {
+        (Some(circuit), Some(circuits)) => circuits.get(**circuit).hover,
+        _ => false,
+    };
     let mut wanted = options
         .show_legend
-        .then(|| race_prompts(active_dev, lang, &settings.controls));
+        .then(|| race_prompts(active_dev, lang, &settings.controls, hover));
     if rules.is_some_and(|rules| rules.mode == Mode::Free)
         && let (Some(free_music), Some(circuit), Some(circuits), Some(songs)) =
             (free_music, circuit, circuits, songs)

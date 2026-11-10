@@ -96,6 +96,12 @@ impl Design {
             _ => None,
         }
     }
+
+    /// Whether it hovers over the road instead of rolling on it: a model
+    /// that does (see [`super::hover`]).
+    pub fn hovers(self) -> bool {
+        self.model().is_some_and(|model| model.hover.is_some())
+    }
 }
 
 /// Every design of `roster`'s: those built in code, then its models, for
@@ -104,8 +110,13 @@ impl Design {
 pub fn every(roster: &crate::bike::Roster) -> Vec<Design> {
     let mut designs = Design::BUILT_IN_CODE.to_vec();
     for entry in roster.iter() {
-        if !designs.contains(&entry.design()) {
-            designs.push(entry.design());
+        for design in [Some(entry.design()), entry.hover_design()]
+            .into_iter()
+            .flatten()
+        {
+            if !designs.contains(&design) {
+                designs.push(design);
+            }
         }
     }
     designs

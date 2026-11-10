@@ -172,6 +172,14 @@ impl Language {
         }
     }
 
+    /// What the wheelie's key or button does where the bikes hover.
+    pub fn action_drift(self) -> &'static str {
+        match self {
+            Language::Spanish => "Derrape",
+            Language::English => "Drift",
+        }
+    }
+
     pub fn action_look_back(self) -> &'static str {
         match self {
             Language::Spanish => "Mirar atrás",

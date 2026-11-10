@@ -36,6 +36,20 @@ pub struct Model {
     /// The slicks it wears.
     #[serde(default)]
     pub tyres: tyre::Compound,
+    /// If it hovers over the road instead of rolling on it (see
+    /// [`super::hover::Hover`]): it has no wheels, its `front_axle` and
+    /// `rear_axle` are the middles of its pads and their radii the pads'.
+    #[serde(default)]
+    pub hover: Option<super::hover::Hover>,
+    /// Whose rider it carries, by that model's folder, if not one of its
+    /// own (`pilot.bin` and `pilot_color.jpg` are then read from there):
+    /// another version of a bike is ridden by the same rider.
+    #[serde(default, deserialize_with = "crate::circuits::data::optional_text")]
+    rider: Option<&'static str>,
+    /// Whether it has lights of its own, lit whatever light falls on it:
+    /// `emissive.jpg` in its folder, black where it has none.
+    #[serde(default)]
+    pub emissive: bool,
     /// Its folder in `assets/models/`, in the content pack.
     #[serde(skip)]
     folder: &'static str,
@@ -85,12 +99,27 @@ impl Model {
         self.file("normal.jpg")
     }
 
+    fn emissive(&self) -> &'static [u8] {
+        self.file("emissive.jpg")
+    }
+
+    /// The folder its rider is in: its own, or that of the model whose
+    /// rider it carries.
+    pub fn rider_folder(&self) -> &'static str {
+        self.rider.unwrap_or(self.folder)
+    }
+
+    /// A file of its rider's folder, from the content pack.
+    fn rider_file(&self, name: &str) -> &'static [u8] {
+        crate::content::file(&format!("models/{}/{name}", self.rider_folder()))
+    }
+
     pub fn pilot(&self) -> &'static [u8] {
-        self.file("pilot.bin")
+        self.rider_file("pilot.bin")
     }
 
     pub fn pilot_color(&self) -> &'static [u8] {
-        self.file("pilot_color.jpg")
+        self.rider_file("pilot_color.jpg")
     }
 }
 
@@ -111,6 +140,13 @@ pub fn model(folder: &str) -> Result<&'static Model, String> {
     }
     let path = format!("models/{folder}/model.ron");
     let mut model: Model = crate::circuits::data::parse(&path, crate::content::try_text(&path)?)?;
+    if let Some(rider) = model.rider
+        && (rider.is_empty() || rider.contains(['/', '\\', '.']))
+    {
+        return Err(format!(
+            "{path}: its rider, `{rider}`, is not a folder of assets/models/"
+        ));
+    }
     model.folder = String::leak(folder.to_string());
     model.index = models.len();
     let model: &'static Model = Box::leak(Box::new(model));
@@ -276,14 +312,27 @@ pub fn texture(bytes: &[u8], srgb: bool) -> Image {
     image
 }
 
-/// Material de una moto: color, metal y rugosidad, y relieve.
+/// How bright a model's own lights are (see [`Model::emissive`]): well over
+/// the daylight on its paint, so that they read as lit by day too.
+const LIGHTS: f32 = 6.0;
+
+/// Material de una moto: color, metal y rugosidad, y relieve; and its own
+/// lights, if it has any.
 pub(super) fn material(model: &Model, images: &mut Assets<Image>) -> StandardMaterial {
+    let lights = model
+        .emissive
+        .then(|| images.add(texture(model.emissive(), true)));
     StandardMaterial {
         base_color_texture: Some(images.add(texture(model.base_color(), true))),
         metallic_roughness_texture: Some(images.add(texture(model.metallic_roughness(), false))),
         normal_map_texture: Some(images.add(texture(model.normal(), false))),
         metallic: 1.0,
         perceptual_roughness: 1.0,
+        emissive: match lights {
+            Some(_) => LinearRgba::rgb(LIGHTS, LIGHTS, LIGHTS),
+            None => LinearRgba::BLACK,
+        },
+        emissive_texture: lights,
         ..default()
     }
 }
@@ -412,6 +461,22 @@ pub mod tests {
         for model in roster_models(roster) {
             let pack = read(model.bike());
             let names: Vec<&str> = pack.meshes.iter().map(|m| m.name.as_str()).collect();
+            // One that hovers is its body alone, floating: its lowest
+            // point well over the ground, and its pads under its ends.
+            if model.hover.is_some() {
+                assert_eq!(names, ["chassis"]);
+                let Some(VertexAttributeValues::Float32x3(positions)) =
+                    pack.meshes[0].mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                else {
+                    panic!("sin posiciones");
+                };
+                let lowest = positions.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
+                assert!((0.1..0.4).contains(&lowest), "it floats: {lowest}");
+                let geometry = &model.geometry;
+                assert!(geometry.front_axle.z < -0.3 && geometry.rear_axle.z > 0.3);
+                assert!(!model.steers, "a hover bike has no fork to turn");
+                continue;
+            }
             assert_eq!(
                 names,
                 [
@@ -454,7 +519,11 @@ pub mod tests {
     }
 
     pub fn exhausts_open_at_the_back_of_the_silencers_on(roster: &'static crate::bike::Roster) {
-        for model in roster_models(roster) {
+        // Those with an engine: one that hovers has no silencer.
+        for model in roster_models(roster)
+            .into_iter()
+            .filter(|model| model.hover.is_none())
+        {
             let pack = read(model.bike());
             let exhaust = &pack.meshes[4].mesh;
             let Some(VertexAttributeValues::Float32x3(positions)) =

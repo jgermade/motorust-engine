@@ -13,6 +13,7 @@ use bevy::prelude::*;
 
 use crate::bike::{BikeAssets, BikeState, RIDERS, Roster};
 use crate::camera::{CameraGlide, CameraPlayer, right_stick};
+use crate::circuits::{Circuits, CurrentCircuit};
 use crate::gamepads::ActiveController;
 use crate::hud::UiFont;
 use crate::legend::{KeyPrompt, Keys, ScreenLegend, menu_prompts, show_screen_legend};
@@ -151,10 +152,13 @@ fn spawn_showcase(
     roster: Res<Roster>,
     track: Res<Track>,
     mut assets: BikeAssets,
+    (circuits, current): (Res<Circuits>, Res<CurrentCircuit>),
 ) {
+    // Those that hover, where the circuit's bikes do.
+    let hover = circuits.get(*current).hover;
     for (index, entry) in roster.iter().enumerate() {
-        let state = BikeState::parked_on(&track, track.grid_slot(index));
-        let bike = assets.spawn(&mut commands, entry, state);
+        let state = BikeState::parked_on(&track, track.grid_slot(index)).standing(hover);
+        let bike = assets.spawn(&mut commands, entry, state, hover);
         commands
             .entity(bike)
             .insert((Showcase(index), DespawnOnExit(GameState::Select)));
