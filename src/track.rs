@@ -50,17 +50,27 @@ pub struct Layout {
 /// A stretch of the lap, `from` and `to` metres from the finish line, where
 /// the walls stand `wall` metres from the centre line, closer than the edge
 /// of the asphalt: a bridge narrower than the road. They close in over the
-/// [`NARROW_EASE`] metres before it and open out over as many after it.
+/// `ease` metres before it and open out over as many after it
+/// ([`NARROW_EASE`] where a circuit's file leaves it out: longer for walls
+/// that close in a long way, down to a single lane).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Narrowing {
     pub from: f32,
     pub to: f32,
     pub wall: f32,
+    #[serde(default = "narrow_ease")]
+    pub ease: f32,
+}
+
+/// A [`Narrowing`]'s `ease` where a circuit's file leaves it out.
+fn narrow_ease() -> f32 {
+    NARROW_EASE
 }
 
 /// How far before a narrow stretch the walls start closing in, and after it
-/// they have opened out again (m).
+/// they have opened out again (m), unless it says otherwise
+/// ([`Narrowing::ease`]).
 pub const NARROW_EASE: f32 = 25.0;
 /// Where the walls are closer than the edge of the asphalt, how far short of
 /// them the road counts as ending (m): the bikes keep that far off them.
@@ -568,14 +578,13 @@ impl Track {
                         .map(|narrow| {
                             // From where they start closing in to where they
                             // have opened out again.
-                            let total =
-                                (narrow.to - narrow.from).rem_euclid(lap) + 2.0 * NARROW_EASE;
-                            let into = (along - narrow.from + NARROW_EASE).rem_euclid(lap);
+                            let ease = narrow.ease;
+                            let total = (narrow.to - narrow.from).rem_euclid(lap) + 2.0 * ease;
+                            let into = (along - narrow.from + ease).rem_euclid(lap);
                             let closed = if into > total {
                                 0.0
                             } else {
-                                smoothstep(0.0, NARROW_EASE, into)
-                                    * smoothstep(0.0, NARROW_EASE, total - into)
+                                smoothstep(0.0, ease, into) * smoothstep(0.0, ease, total - into)
                             };
                             track.wall.lerp(narrow.wall, closed)
                         })
@@ -745,8 +754,8 @@ impl Track {
                 .narrows
                 .iter()
                 .map(|narrow| {
-                    let closed = smoothstep(narrow.from - NARROW_EASE, narrow.from, along)
-                        * (1.0 - smoothstep(narrow.to, narrow.to + NARROW_EASE, along));
+                    let closed = smoothstep(narrow.from - narrow.ease, narrow.from, along)
+                        * (1.0 - smoothstep(narrow.to, narrow.to + narrow.ease, along));
                     wall.lerp(narrow.wall.min(*wall), closed)
                 })
                 .fold(*wall, f32::min);
@@ -2616,8 +2625,8 @@ pub mod tests {
             // Well before and after it, the walls are where they always are,
             // and they close in and open out without a step.
             for along in [
-                narrow.from - NARROW_EASE - 5.0,
-                narrow.to + NARROW_EASE + 5.0,
+                narrow.from - narrow.ease - 5.0,
+                narrow.to + narrow.ease + 5.0,
             ] {
                 assert_eq!(track.wall_at(track.index_at(along)), track.wall());
                 assert_eq!(
@@ -2625,8 +2634,8 @@ pub mod tests {
                     track.half_width()
                 );
             }
-            let first = track.index_at(narrow.from - NARROW_EASE - 10.0);
-            for k in 0..((NARROW_EASE + 20.0) / track.step_length()) as usize {
+            let first = track.index_at(narrow.from - narrow.ease - 10.0);
+            for k in 0..((narrow.ease + 20.0) / track.step_length()) as usize {
                 let (a, b) = (track.wall_at(first + k), track.wall_at(first + k + 1));
                 assert!(b <= a + 1e-5 && a - b < 0.8, "{a} {b}");
             }
