@@ -9,8 +9,8 @@ use super::lamps::Lamp;
 use super::lettering::sign_image;
 use super::quads::MeshBuilder;
 use super::scenery::{
-    Billboard, BrakeMarker, BridgeStyle, ChevronDirection, ChevronSign, FlowerKind, Scenery, Soil,
-    Span,
+    Billboard, BrakeMarker, BridgeStyle, ChevronDirection, ChevronSign, FlowerKind, Paving,
+    Scenery, Soil, Span,
 };
 use super::terrain::{CLIFF_NORMAL_Y, GRASS_TILE, Ground, GroundMesh, Terrain};
 use super::textures::{PLANK_BOARD, PLANK_GAP, WorldTextures};
@@ -122,6 +122,23 @@ pub fn structure_pieces(
         }
         let indices = indices(track, *tunnel, lap);
         let mut parts = tunnel_meshes(track, terrain, scenery.soil, &indices);
+        // Under a road of plates, a race track's tunnel: dark panels, its
+        // lamps and their light in the circuit's first curb colour, and a
+        // ring of that light round it every few metres.
+        let raceway = (scenery.paving == Paving::Plates).then_some(scenery.curbs[0]);
+        if let Some(light) = raceway {
+            for lamp in &mut parts.lamps {
+                lamp.color = light.mix(&Color::WHITE, 0.35);
+            }
+            pieces.push((
+                tunnel_rings(track, &indices),
+                StandardMaterial {
+                    base_color: light,
+                    emissive: light.to_linear() * RING_GLOW,
+                    ..default()
+                },
+            ));
+        }
         lamps.append(&mut parts.lamps);
         // The top in flower, drawn as the ground round it is.
         ground.extend(parts.meadows.drain(..).map(|(kind, meadow)| GroundMesh {
@@ -161,6 +178,14 @@ pub fn structure_pieces(
         // earth, a cave of it; in a lunar station, pressurized metallic hull
         // panels lit by cool cyan-white strips.
         let lining = match scenery.soil {
+            _ if raceway.is_some() => StandardMaterial {
+                base_color: Color::srgb(0.2, 0.22, 0.27),
+                base_color_texture: Some(textures.panels.clone()),
+                emissive: LinearRgba::rgb(0.01, 0.015, 0.03),
+                perceptual_roughness: 0.45,
+                metallic: 0.3,
+                ..default()
+            },
             Soil::Rock | Soil::Mine | Soil::Granite | Soil::Floor => StandardMaterial {
                 base_color: Color::srgb(0.95, 0.78, 0.52),
                 base_color_texture: Some(textures.panels.clone()),
@@ -184,7 +209,9 @@ pub fn structure_pieces(
             },
         };
         let concrete = StandardMaterial {
-            base_color: if scenery.soil == Soil::Lunar {
+            base_color: if raceway.is_some() {
+                Color::srgb(0.24, 0.26, 0.3)
+            } else if scenery.soil == Soil::Lunar {
                 Color::srgb(0.66, 0.70, 0.78)
             } else {
                 Color::srgb(0.75, 0.73, 0.7)
@@ -193,7 +220,13 @@ pub fn structure_pieces(
             perceptual_roughness: 0.9,
             ..default()
         };
-        let lights = if scenery.soil == Soil::Lunar {
+        let lights = if let Some(light) = raceway {
+            StandardMaterial {
+                base_color: light,
+                emissive: light.to_linear() * RING_GLOW,
+                ..default()
+            }
+        } else if scenery.soil == Soil::Lunar {
             StandardMaterial {
                 base_color: Color::srgb(0.78, 0.94, 1.0),
                 emissive: LinearRgba::rgb(3.2, 5.4, 7.5),
@@ -219,7 +252,10 @@ pub fn structure_pieces(
         };
         // The lamps' light, added over what it falls on.
         let pools = StandardMaterial {
-            base_color: if scenery.soil == Soil::Lunar {
+            base_color: if let Some(light) = raceway {
+                let light = light.to_srgba();
+                Color::srgb(0.4 * light.red, 0.4 * light.green, 0.4 * light.blue)
+            } else if scenery.soil == Soil::Lunar {
                 Color::srgb(0.18, 0.32, 0.46)
             } else {
                 POOL_COLOR
@@ -913,6 +949,49 @@ fn concrete_deck(
         }
     }
     deck
+}
+
+/// A race track's tunnel's rings of light (see [`tunnel_rings`]): one every
+/// so many points of the lap, how thick they are (m), how far in from the
+/// tunnel's walls and under its roof, and how bright over their colour.
+const RING_EVERY: usize = 8;
+const RING_THICK: f32 = 0.22;
+const RING_INSET: f32 = 0.2;
+const RING_GLOW: f32 = 6.0;
+
+/// The rings of light of a race track's tunnel along the points `indices`
+/// of the lap: at every few, a strip up each wall and across under the
+/// roof, round the road.
+fn tunnel_rings(track: &Track, indices: &[usize]) -> Mesh {
+    let mut rings = MeshBuilder::default();
+    let side = WALL_DISTANCE - RING_INSET;
+    let top = TUNNEL_HEIGHT - RING_INSET;
+    for &i in indices.iter().step_by(RING_EVERY).skip(1) {
+        let at = |lateral: f32, up: f32| track.surface_point(i, lateral) + Vec3::Y * up;
+        // Level across under the roof, from the higher of its two feet.
+        let roof = at(side, top).y.max(at(-side, top).y);
+        let corner = |lateral: f32| {
+            let foot = at(lateral, 0.0);
+            Vec3::new(foot.x, roof, foot.z)
+        };
+        for lateral in [side, -side] {
+            rings.beam(
+                at(lateral, 0.0),
+                corner(lateral),
+                RING_THICK,
+                RING_THICK,
+                Color::WHITE,
+            );
+        }
+        rings.beam(
+            corner(side),
+            corner(-side),
+            RING_THICK,
+            RING_THICK,
+            Color::WHITE,
+        );
+    }
+    rings.build()
 }
 
 /// A skyway's deck, darker than a bridge's concrete, and how many points of
