@@ -159,6 +159,19 @@ const DRIFT_SPARES: f32 = 0.7;
 /// and what sliding costs it instead (m/s²): a drift pays in a tight bend,
 /// not in a gentle one.
 const DRIFT_DRAG: f32 = 5.0;
+/// A drift charges a boost, as a kart's does: the time spent sliding well
+/// (over [`DRIFT_CHARGING`] of all it can) adds up, to [`DRIFT_CHARGE`]
+/// seconds at most, and let go after [`DRIFT_CHARGED`] seconds or more it
+/// gives [`BOOST_PER_CHARGE`] seconds of boost for each; let go sooner, or
+/// lost in the air, it gives none.
+const DRIFT_CHARGING: f32 = 0.6;
+pub const DRIFT_CHARGE: f32 = 3.0;
+pub const DRIFT_CHARGED: f32 = 0.6;
+const BOOST_PER_CHARGE: f32 = 0.5;
+/// What a boost adds while it lasts: this much drive (m/s²), and this
+/// share of the top speed.
+const BOOST_ACCEL: f32 = 14.0;
+const BOOST_TOP_SPEED: f32 = 0.1;
 
 pub struct BikePlugin;
 
@@ -444,6 +457,11 @@ pub struct BikeState {
     /// How far a hover bike's nose is swung into the bend, drifting (rad,
     /// positive to the left, up to [`DRIFT_ANGLE`]): nought on wheels.
     pub drift: f32,
+    /// How long it has been drifting well, charging a boost (s, up to
+    /// [`DRIFT_CHARGE`]), and how long the boost a drift let go gave it
+    /// still lasts (s).
+    pub charge: f32,
+    pub boost: f32,
 }
 
 impl BikeState {
@@ -469,6 +487,8 @@ impl BikeState {
             gear: 0,
             shift: 0.0,
             drift: 0.0,
+            charge: 0.0,
+            boost: 0.0,
         }
     }
 
@@ -719,7 +739,13 @@ pub fn step(
     let top_speed = tuning
         .max_speed
         .lerp(tuning.grass_max_speed, smoothstep(GRASS_GRACE, 1.0, grass))
-        * (1.0 + state.chassis.wheelie_boost());
+        * (1.0 + state.chassis.wheelie_boost())
+        // A drift's boost, while it lasts.
+        * if state.boost > 0.0 {
+            1.0 + BOOST_TOP_SPEED
+        } else {
+            1.0
+        };
 
     // Motor: empuja fuerte desde parado y se queda sin empuje al llegar a la punta.
     let speed_ratio = (state.speed.max(0.0) / top_speed).min(1.0);
@@ -745,6 +771,9 @@ pub fn step(
         * drive
         * (1.0 + state.chassis.wheelie_drive());
     let mut accel = power * tuning.engine_accel;
+    if state.boost > 0.0 {
+        accel += BOOST_ACCEL * contact;
+    }
     // Freno: frena mientras avanza; parada (o casi), da marcha atrás.
     if state.speed > 0.5 {
         accel -= brake * tuning.brake_decel;
@@ -826,6 +855,24 @@ pub fn step(
         if swinging_out { DRIFT_IN } else { DRIFT_OUT },
         dt,
     );
+    // Sliding well, the drift charges; let go (the button, not the bend
+    // alone) once charged, it turns into a boost; in the air it is lost.
+    let held = tuning.hover && input.wheelie > 0.0 && state.grounded;
+    let (charge, boost) = if held {
+        let charging = if state.sliding() > DRIFT_CHARGING {
+            dt
+        } else {
+            0.0
+        };
+        (
+            (state.charge + charging).min(DRIFT_CHARGE),
+            (state.boost - dt).max(0.0),
+        )
+    } else if state.charge >= DRIFT_CHARGED && state.grounded {
+        (0.0, state.boost.max(BOOST_PER_CHARGE * state.charge))
+    } else {
+        (0.0, (state.boost - dt).max(0.0))
+    };
 
     // Inclinación según cuánto agarre pide la curva: poco giro, poca
     // inclinación, y del todo solo al apurar. (La de equilibrio frente a la
@@ -924,6 +971,8 @@ pub fn step(
         gear,
         shift,
         drift,
+        charge,
+        boost,
         pitch: approach(state.pitch, target_pitch, PITCH_RESPONSE, dt),
         accel,
         chassis,
@@ -3885,6 +3934,70 @@ pub mod tests {
         // In a gentle bend it only costs: a drift is for the tight ones.
         let (gentle, sliding) = (round(0.0, 0.3), round(1.0, 0.3));
         assert!(sliding.speed < gentle.speed - 1.0);
+    }
+
+    #[test]
+    fn a_drift_held_charges_a_boost_given_when_it_is_let_go() {
+        let flat = Ground::flat(Surface::Asphalt);
+        let tuning = hovering();
+        let ride = |input: BikeInput, state: BikeState, seconds: f32| {
+            (0..(seconds / DT) as usize)
+                .fold(state, |state, _| step(&state, &input, &flat, &tuning, DT))
+        };
+        let fast = BikeState {
+            speed: 60.0,
+            ..parked()
+        };
+        let drifting = BikeInput {
+            throttle: 1.0,
+            steer: 1.0,
+            wheelie: 1.0,
+            ..default()
+        };
+        // A short drift charges nothing worth a boost; a long one more,
+        // up to its most.
+        let short = ride(drifting, fast, 0.5);
+        assert!(short.charge < DRIFT_CHARGED && short.boost == 0.0);
+        let long = ride(drifting, fast, 2.0);
+        assert!(long.charge > 1.4 && long.charge < 2.0, "{}", long.charge);
+        assert_eq!(ride(drifting, fast, 6.0).charge, DRIFT_CHARGE);
+        // Let go, the charge becomes a boost, longer for the longer drift.
+        let let_go = |state: BikeState| step(&state, &full_throttle(), &flat, &tuning, DT);
+        assert_eq!(let_go(short).boost, 0.0);
+        let boosted = let_go(long);
+        assert_eq!(boosted.charge, 0.0);
+        assert!((boosted.boost - BOOST_PER_CHARGE * long.charge).abs() < 1e-4);
+        assert!(let_go(ride(drifting, fast, 6.0)).boost > boosted.boost);
+        // Boosted, it pulls harder and past its top speed; then it is over.
+        let level = BikeState {
+            speed: tuning.max_speed,
+            ..parked()
+        };
+        let with_boost = BikeState {
+            boost: 1.0,
+            ..level
+        };
+        let pushed = ride(full_throttle(), with_boost, 0.9);
+        let plain = ride(full_throttle(), level, 0.9);
+        assert!(
+            pushed.speed > plain.speed + 2.0,
+            "{} {}",
+            pushed.speed,
+            plain.speed
+        );
+        assert!(pushed.speed <= tuning.max_speed * (1.0 + BOOST_TOP_SPEED) + 1e-3);
+        assert_eq!(ride(full_throttle(), with_boost, 1.2).boost, 0.0);
+        // In the air the charge is lost; on wheels there is none.
+        let flying = BikeState {
+            grounded: false,
+            ..long
+        };
+        let lost = step(&flying, &full_throttle(), &flat, &tuning, DT);
+        assert_eq!((lost.charge, lost.boost), (0.0, 0.0));
+        let wheels = (0..240).fold(fast, |state, _| {
+            step(&state, &drifting, &flat, &BikeTuning::default(), DT)
+        });
+        assert_eq!((wheels.charge, wheels.boost), (0.0, 0.0));
     }
 
     #[test]
