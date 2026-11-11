@@ -105,10 +105,13 @@ pub fn surface(mesh: &Mesh, atlas: &Image) -> Vec<MirrorPoint> {
 }
 
 /// A pack of props made with Meshy: their meshes, by name, and their one
-/// material, in the colours of all of them.
+/// material, in the colours of all of them; and, if the pack has one
+/// (`glow.jpg`, beside its colours, laid out as they are), what of them
+/// shines of its own: lit windows, lamps, signs.
 pub struct PropPack {
     pieces: Vec<(String, Piece)>,
     pub material: Handle<StandardMaterial>,
+    pub glow: Option<Handle<Image>>,
 }
 
 impl PropPack {
@@ -125,14 +128,15 @@ impl PropPack {
             .map(|(_, piece)| piece)
     }
 
-    /// The pack in `bin` (as an importer writes it) and its colours in
-    /// `color`.
+    /// The pack in `bin` (as an importer writes it), its colours in
+    /// `color` and what shines of it in `glow`, if it has that.
     pub fn load(
         meshes: &mut Assets<Mesh>,
         images: &mut Assets<Image>,
         materials: &mut Assets<StandardMaterial>,
         bin: &[u8],
         color: &[u8],
+        glow: Option<&[u8]>,
     ) -> Self {
         let pack = read(bin);
         let atlas = texture(color, true);
@@ -161,7 +165,12 @@ impl PropPack {
             reflectance: 0.3,
             ..default()
         });
-        Self { pieces, material }
+        let glow = glow.map(|glow| images.add(texture(glow, true)));
+        Self {
+            pieces,
+            material,
+            glow,
+        }
     }
 }
 
@@ -206,6 +215,7 @@ impl PropPacks {
                     materials,
                     crate::content::file(&format!("models/{folder}/props.bin")),
                     crate::content::file(&format!("models/{folder}/color.jpg")),
+                    crate::content::try_file(&format!("models/{folder}/glow.jpg")).ok(),
                 );
                 self.0.insert(folder, pack);
             }
