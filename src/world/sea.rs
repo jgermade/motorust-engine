@@ -485,9 +485,9 @@ fn chamfer(land: &[bool], width: usize, height: usize, wanted: bool) -> Vec<f32>
 /// pinks and on the sun's glare on it.
 const GRID_SPACING: f32 = 60.0;
 const GRID_PIXELS: f32 = 2.0;
-const GRID_FADE: (f32, f32) = (350.0, 1100.0);
-const GRID_REACH: f32 = 1200.0;
-const GRID_STRIP: f32 = 20.0;
+const GRID_FADE: (f32, f32) = (2000.0, 4500.0);
+const GRID_REACH: f32 = 5000.0;
+const GRID_STRIP: f32 = 40.0;
 pub const GRID_GLOW: Color = Color::srgb(0.17, 0.05, 0.33);
 
 /// How the grid is drawn (see `grid.wgsl`).
