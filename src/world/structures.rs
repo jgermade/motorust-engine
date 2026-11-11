@@ -300,6 +300,7 @@ pub fn structure_pieces(
                 | BridgeStyle::SlotTrack
                 | BridgeStyle::OrangeTrack
                 | BridgeStyle::Slide
+                | BridgeStyle::Tube
         ) {
             continue;
         }
@@ -1624,6 +1625,7 @@ pub mod tests {
                     | BridgeStyle::OldWooden
                     | BridgeStyle::SlotTrack
                     | BridgeStyle::OrangeTrack
+                    | BridgeStyle::Tube
                     | BridgeStyle::Slide => continue,
                     BridgeStyle::RedArches => bridge_meshes(&track, &terrain, &indices),
                     BridgeStyle::Truss => truss_bridge_meshes(&track, &terrain, &indices),

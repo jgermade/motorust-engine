@@ -40,6 +40,10 @@ pub struct Layout {
     /// bridge.
     #[serde(deserialize_with = "crate::circuits::data::leak", default)]
     pub narrows: &'static [Narrowing],
+    /// Stretches where the road is a tube the bikes ride round the inside
+    /// of (see [`Tube`]): none if left out.
+    #[serde(deserialize_with = "crate::circuits::data::leak", default)]
+    pub tubes: &'static [Tube],
     /// How far the walls stand from the centre line where nothing closes
     /// them in (m): [`WALL_DISTANCE`] on most tracks, less on a narrow one,
     /// whose asphalt is as much narrower (half a metre short of them, as
@@ -58,6 +62,35 @@ pub struct Narrowing {
     pub to: f32,
     pub wall: f32,
 }
+
+/// A stretch of the lap, `from` and `to` metres from the finish line, where
+/// the road is a tube `radius` metres round inside: its surface curls up
+/// either side of the centre line and closes overhead, and a bike may ride
+/// up it and round to its top, upside down, from either side (the two
+/// sides meet there, and a bike that rides past its top comes down the
+/// other side: all the way round). The road curls up into it
+/// over the [`TUBE_EASE`] metres before it and uncurls over as many after.
+///
+/// The bikes ride it as a road as wide as the tube is round, laid flat
+/// (nothing of their riding changes but how far the walls are); it is
+/// where they and the road are drawn that is rolled up (see
+/// [`Track::rolled`]).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tube {
+    pub from: f32,
+    pub to: f32,
+    pub radius: f32,
+}
+
+/// How far before a tube the road starts curling up, and after it has
+/// uncurled (m).
+pub const TUBE_EASE: f32 = 50.0;
+/// How far round a tube from its bottom its walls are laid, either side,
+/// of the half turn to its top: past it, so that a bike riding over the
+/// top never meets them (it is taken round to the other side at the top,
+/// see [`Track::round_the_tube`]).
+const TUBE_SEAM: f32 = 1.15;
 
 /// How far before a narrow stretch the walls start closing in, and after it
 /// they have opened out again (m).
@@ -321,6 +354,10 @@ pub struct Track {
     /// How far the walls stand from the centre line where nothing closes
     /// them in (m): the lap's (see [`Layout::wall`]), on a road off it too.
     wall: f32,
+    /// How much the road is curled up into a tube at each point of the
+    /// centre line: one over the radius it curls with (1/m), nought where
+    /// it lies as a road (see [`Tube`]). Empty: nowhere.
+    roll: Vec<f32>,
     /// On a road off the lap, how far along the lap each of its points
     /// counts as (m from the finish line). Empty on the lap.
     lap_along: Vec<f32>,
@@ -469,12 +506,125 @@ impl Default for Track {
 impl Track {
     pub fn new(layout: &Layout) -> Self {
         let mut track = Self::lap(layout);
+        track.curl_tubes(layout.tubes);
         for branch in layout.branches {
             track.add_branch(branch);
         }
         track.make_grids();
         track.boosters = track.lay_boosters();
         track
+    }
+
+    /// Curls the lap up into its tubes (see [`Tube`]): how much at each
+    /// point, its walls out to the tubes' seams, and no banking there.
+    fn curl_tubes(&mut self, tubes: &[Tube]) {
+        if tubes.is_empty() {
+            return;
+        }
+        let (n, step) = (self.centerline.len(), self.step);
+        let lap = n as f32 * step;
+        // How much of a tube the road is at each point, and of which.
+        let curled: Vec<(f32, f32)> = (0..n)
+            .map(|i| {
+                let along = i as f32 * step;
+                tubes
+                    .iter()
+                    .map(|tube| {
+                        let total = (tube.to - tube.from).rem_euclid(lap) + 2.0 * TUBE_EASE;
+                        let into = (along - tube.from + TUBE_EASE).rem_euclid(lap);
+                        let share = if into > total {
+                            0.0
+                        } else {
+                            smoothstep(0.0, TUBE_EASE, into)
+                                * smoothstep(0.0, TUBE_EASE, total - into)
+                        };
+                        (share, tube.radius)
+                    })
+                    .fold(
+                        (0.0, 1.0),
+                        |most, tube| if tube.0 > most.0 { tube } else { most },
+                    )
+            })
+            .collect();
+        self.roll = curled
+            .iter()
+            .map(|&(share, radius)| share / radius)
+            .collect();
+        if self.walls.is_empty() {
+            self.walls = vec![self.wall; n];
+        }
+        for (i, &(share, radius)) in curled.iter().enumerate() {
+            let seam = TUBE_SEAM * std::f32::consts::PI * radius;
+            self.walls[i] = self.walls[i].lerp(seam.max(self.walls[i]), share);
+            self.bank[i] *= 1.0 - share;
+        }
+    }
+
+    /// Something at a point already found beside the lap that has ridden
+    /// over the top of a tube: how far to move it (on the ground, as the
+    /// bikes ride it: the tube laid flat) to where it is the same place
+    /// reached round the other side. `None` anywhere else.
+    pub fn round_the_tube(&self, nearest: &Nearest) -> Option<Vec2> {
+        if nearest.road != 0 || self.roll.is_empty() {
+            return None;
+        }
+        let (i, j) = (
+            self.wrap(nearest.index as isize),
+            self.wrap(nearest.index as isize + 1),
+        );
+        let roll = self.roll[i].lerp(self.roll[j], nearest.t);
+        if roll < 1e-5 || nearest.lateral.abs() * roll <= std::f32::consts::PI {
+            return None;
+        }
+        let left = self.left_normal(i).lerp(self.left_normal(j), nearest.t);
+        let round = std::f32::consts::TAU / roll;
+        Some(-left.normalize_or_zero() * round * nearest.lateral.signum())
+    }
+
+    /// How much the road is curled up into a tube at point `index` of the
+    /// centre line: one over the radius it curls with (1/m), nought where
+    /// it lies as a road.
+    pub fn roll_at(&self, index: usize) -> f32 {
+        self.roll
+            .get(self.wrap(index as isize))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    /// Where something `lateral` metres to the left of the centre line of a
+    /// road curled up `roll` (see [`Self::roll_at`]) is, rolled up with
+    /// it: how far to the left of the centre line, how high over it, and
+    /// how far round the tube from its bottom (rad, positive up its left
+    /// side). As it lies, where the road is not curled.
+    pub fn rolled(roll: f32, lateral: f32) -> (f32, f32, f32) {
+        if roll < 1e-5 {
+            return (lateral, 0.0, 0.0);
+        }
+        let round = lateral * roll;
+        (round.sin() / roll, (1.0 - round.cos()) / roll, round)
+    }
+
+    /// Where a point already found beside the lap is drawn where the road
+    /// is curled up into a tube, and how far round the tube it is (see
+    /// [`Self::rolled`]): `None` where the road lies as a road (or it is
+    /// on a road off the lap).
+    pub fn rolled_beside(&self, nearest: &Nearest) -> Option<(Vec3, f32)> {
+        if nearest.road != 0 || self.roll.is_empty() {
+            return None;
+        }
+        let (i, j) = (
+            self.wrap(nearest.index as isize),
+            self.wrap(nearest.index as isize + 1),
+        );
+        let roll = self.roll[i].lerp(self.roll[j], nearest.t);
+        if roll < 1e-5 {
+            return None;
+        }
+        let (across, up, round) = Self::rolled(roll, nearest.lateral);
+        let left = self.left_normal(i).lerp(self.left_normal(j), nearest.t);
+        let ground = nearest.point + left.normalize_or_zero() * across;
+        let height = self.elevation[i].lerp(self.elevation[j], nearest.t) + up;
+        Some((Vec3::new(ground.x, height, ground.y), round))
     }
 
     /// The boosters of the loops that have them (see
@@ -527,6 +677,7 @@ impl Track {
             closed: true,
             walls: Vec::new(),
             wall: layout.wall,
+            roll: Vec::new(),
             lap_along: Vec::new(),
             apart: Vec::new(),
             side_roads: Vec::new(),
@@ -793,6 +944,7 @@ impl Track {
             closed: false,
             walls: Vec::new(),
             wall: self.wall,
+            roll: Vec::new(),
             lap_along: Vec::new(),
             apart: Vec::new(),
             side_roads: Vec::new(),
@@ -1601,8 +1753,10 @@ impl Track {
     /// del punto `index` de la línea central.
     pub fn surface_point(&self, index: usize, lateral: f32) -> Vec3 {
         let index = self.wrap(index as isize);
-        let ground = self.offset_point(index, lateral);
-        let height = self.elevation[index] - lateral * self.bank[index].tan();
+        // Rolled up where the road is curled into a tube.
+        let (across, up, _) = Self::rolled(self.roll_at(index), lateral);
+        let ground = self.offset_point(index, across);
+        let height = self.elevation[index] - across * self.bank[index].tan() + up;
         Vec3::new(ground.x, height, ground.y)
     }
 
@@ -1633,6 +1787,10 @@ impl Track {
     /// [`Self::set_shoulders`]).
     pub fn surface_beside(&self, nearest: &Nearest) -> Surface {
         if nearest.distance <= self.half_width_beside(nearest) + CURB_WIDTH {
+            return Surface::Asphalt;
+        }
+        // All round a tube is its road.
+        if nearest.road == 0 && self.roll_at(nearest.index) > 1e-5 {
             return Surface::Asphalt;
         }
         let road = self.road(nearest.road);
@@ -2235,8 +2393,18 @@ pub mod tests {
                     } else {
                         (j, i)
                     };
+                    // or rides a bridge well above it (a skyway, a tube).
+                    let on_bridge = |i: usize| {
+                        let along = i as f32 * track.step;
+                        circuit
+                            .scenery
+                            .bridges
+                            .iter()
+                            .any(|bridge| bridge.span.contains(along, lap))
+                    };
                     assert!(
-                        in_tunnel(low) && track.elevation[high] - track.elevation[low] > 12.0,
+                        (in_tunnel(low) || on_bridge(high))
+                            && track.elevation[high] - track.elevation[low] > 12.0,
                         "los puntos {i} y {j} de {name} se tocan"
                     );
                 }

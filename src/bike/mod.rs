@@ -663,6 +663,10 @@ pub fn parked_lean(hover: bool) -> f32 {
     if hover { 0.0 } else { STOPPED_LEAN }
 }
 
+/// Further than a bike rides in a step at any speed (m): moved more, it
+/// was taken round a tube's top.
+const ROUND_THE_TUBE: f32 = 6.0;
+
 /// The bikes change gears as Options > Game says.
 fn follow_gears(settings: Res<Settings>, mut tuning: ResMut<BikeTuning>) {
     if tuning.gears != settings.gears {
@@ -1065,6 +1069,11 @@ pub fn advance_hitting_walls(
         grip: track.grip_beside(&nearest),
     };
     let mut next = step(state, input, &ground, tuning, dt);
+    // Over the top of a tube, it comes down the other side.
+    let beside = track.nearest_at(next.position, next.elevation);
+    if let Some(round) = track.round_the_tube(&beside) {
+        next.position += round;
+    }
     let wall = hit_walls(&mut next, track);
     let ground_height = track.road_height_at(next.position, next.elevation);
     settle(&mut next, &ground, ground_height, dt);
@@ -2501,18 +2510,36 @@ fn rumble_controllers(
 /// cualquier tasa de fotogramas.
 fn interpolate_bikes(
     fixed_time: Res<Time<Fixed>>,
+    track: Option<Res<Track>>,
     mut bikes: Query<(&BikeState, &PreviousBikeState, &mut Transform), Without<LeanPivot>>,
     mut pivots: Query<(&ChildOf, &mut Transform), With<LeanPivot>>,
 ) {
     let alpha = fixed_time.overstep_fraction();
     for (state, previous, mut transform) in &mut bikes {
         let (from, to) = (&previous.0, state);
+        // Taken round a tube's top in this step (see
+        // `Track::round_the_tube`), it is drawn where it now is: half way
+        // between the two would be across the tube.
+        let jumped = from.position.distance(to.position) > ROUND_THE_TUBE;
+        let from = if jumped { to } else { from };
         let position = from.position.lerp(to.position, alpha);
         let elevation = from.elevation.lerp(to.elevation, alpha);
         transform.translation = to_world(position, elevation + SURFACE_Y);
         // As a whole: round a loop the bike turns about its own up, and out
         // of it the pitch goes from a whole turn back to about zero.
         transform.rotation = from.orientation().slerp(to.orientation(), alpha);
+        // Where the road is curled up into a tube, the bike is rolled up
+        // with it: round its inside, upside down at its top.
+        if let Some(track) = track.as_deref().filter(|_| to.ride.is_none()) {
+            let nearest = track.nearest_at(position, elevation);
+            if let Some((surface, round)) = track.rolled_beside(&nearest) {
+                let above = elevation - track.height_beside(&nearest);
+                let roll = Quat::from_rotation_z(-round);
+                transform.rotation *= roll;
+                transform.translation =
+                    surface + transform.rotation * Vec3::Y * (SURFACE_Y + above);
+            }
+        }
     }
     for (child_of, mut transform) in &mut pivots {
         if let Ok((state, previous, _)) = bikes.get(child_of.parent()) {

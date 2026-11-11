@@ -270,6 +270,12 @@ pub enum SkyStyle {
     /// by; what is lit of its own (strips of light, windows, a bike's pads)
     /// stands out.
     Night,
+    /// A great city's night under its own haze: no stars, the sky a dull
+    /// glow of amber and rust low down from the city's lights, dark teal
+    /// overhead, the haze closing in a few hundred metres off and swallowing
+    /// what is far; the light dim and warm from above, the shade cold; what
+    /// is lit of its own burns through it.
+    Smog,
     /// A retro sunset, as the covers and the arcade racers of the 1980s drew
     /// theirs: indigo overhead, magenta down to the horizon, orange and
     /// yellow round a huge sun low in the west-south-west, yellow to magenta, striped across
@@ -351,6 +357,11 @@ pub enum BridgeStyle {
     OrangeTrack,
     /// A slide's chute of yellow plastic between tall red sides.
     Slide,
+    /// A tube of glass, floating: where the lap is curled up into a tube
+    /// (the layout's `tubes`, see `crate::track::Tube`), glass all round
+    /// it, hoops of light every few metres, no deck, no pylons and no
+    /// barriers.
+    Tube,
     /// A skyway: a slim dark deck high on pairs of pylons, with nothing
     /// overhead, between barriers lit along their tops
     /// ([`WallStyle::Barrier`]).

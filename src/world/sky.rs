@@ -354,6 +354,35 @@ impl Palette {
                 glint: GLINT,
                 deep_water: Some(Color::srgb(0.01, 0.03, 0.08)),
             },
+            // A great city's night under its haze: dark teal overhead, a dull
+            // amber glow low down, the haze near and rust-coloured; a dim
+            // warm light from high up, a cold fill, and the picture a
+            // little crushed and saturated, as a film of neon in the rain.
+            SkyStyle::Smog => Self {
+                zenith: Color::srgb(0.02, 0.05, 0.07),
+                above_horizon: Color::srgb(0.13, 0.1, 0.1),
+                horizon: Color::srgb(0.3, 0.17, 0.12),
+                glow: 0.0,
+                glow_color: Color::srgb(0.9, 0.5, 0.2),
+                sun_azimuth: 0.3 * std::f32::consts::PI,
+                sun_elevation: 1.1,
+                sun_disc: Color::BLACK,
+                sunlight: Color::srgb(0.82, 0.86, 0.95),
+                sunlight_strength: 0.25,
+                ambient: Color::srgb(0.6, 0.7, 0.85),
+                ambient_brightness: 560.0,
+                clouds: Color::srgba(0.4, 0.25, 0.15, 0.0),
+                fog: (350.0, 2800.0),
+                grade: Grade {
+                    saturation: 1.12,
+                    contrast: 1.18,
+                    exposure: 0.2,
+                    warmth: 0.004,
+                    highlight_saturation: 0.95,
+                },
+                glint: GLINT,
+                deep_water: Some(Color::srgb(0.02, 0.03, 0.04)),
+            },
             // Indoors, under the lamps of a shop's ceiling: no sky to see
             // (the room's walls and ceiling hide it; what is left of it is
             // the colour of the far walls, as the fog is), no sun, no
@@ -852,7 +881,7 @@ pub fn light_the_sky(
     // In space, the sun with no air round it: small and sharp.
     let space = style == SkyStyle::Space;
     let retro = style == SkyStyle::Synthwave;
-    let sun_size = if style == SkyStyle::Night {
+    let sun_size = if matches!(style, SkyStyle::Night | SkyStyle::Smog) {
         // The light is the Moon's, which is drawn as itself.
         0.0
     } else if space {
