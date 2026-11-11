@@ -2,9 +2,9 @@
 // src/world/sea.rs): lines every so many metres either way, worked out for
 // each pixel from how far apart they are on the screen there, so that they
 // are as wide on the screen near and far (they face the eye wherever it
-// is), smoothed at their edges; faded where the cells grow too small on the
-// screen (far off, edge on, where they would crowd and shimmer) and away
-// from the camera.
+// is), smoothed at their edges; where the cells grow too small on the
+// screen (far off, edge on, where they would crowd and shimmer) as much of
+// the pixel as they would cover on average, on to the horizon.
 
 #import bevy_pbr::{
     forward_io::VertexOutput,
@@ -22,9 +22,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // How many pixels from the nearest line, either way.
     let off = abs(fract(coord - 0.5) - 0.5) / step;
     let nearest = min(off.x, off.y);
-    var alpha = 1.0 - clamp(nearest - lines.y * 0.5 + 0.5, 0.0, 1.0);
-    // Where a cell is only a few pixels on the screen, the lines would crowd.
-    alpha *= 1.0 - smoothstep(0.06, 0.2, max(step.x, step.y));
+    let sharp = 1.0 - clamp(nearest - lines.y * 0.5 + 0.5, 0.0, 1.0);
+    // Where a cell is only a few pixels on the screen, the lines would crowd
+    // and shimmer: there, as much of the pixel as they would cover on
+    // average, so that far off they run on to the horizon as a haze of
+    // their colour instead of stopping short of it.
+    let crowded = smoothstep(0.08, 0.4, max(step.x, step.y));
+    let average = min(lines.y * (step.x + step.y), 0.3);
+    var alpha = mix(sharp, average, crowded);
     let distance = length(in.world_position.xyz - view.world_position.xyz);
     alpha *= 1.0 - smoothstep(lines.z, lines.w, distance);
     return vec4(color.rgb, color.a * alpha);
