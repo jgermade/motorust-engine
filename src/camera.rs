@@ -470,6 +470,10 @@ fn tilted_chase_view(target: Vec3, heading: f32, distance: f32, tilt: Quat) -> (
 /// off the loop, which the camera's `yaw` follows; once the camera has
 /// caught up, it is right behind the bike. Out of the loop, upright, there
 /// is no tilt left.
+/// How far a bike is rolled over (rad) for the camera to go over with it:
+/// up a tube's side.
+const TUBE_ROLL: f32 = 0.02;
+
 fn loop_tilt(rotation: Quat, yaw: f32, bike_yaw: f32) -> Quat {
     Quat::from_rotation_y(-yaw) * rotation * Quat::from_rotation_y(yaw - bike_yaw)
 }
@@ -547,7 +551,10 @@ fn follow_player(
         // past the vertical, so the heading comes from the bike itself: the
         // one it will have off the loop, turned as it is on the running
         // surface.
-        let (bike_yaw, _, _) = bike_transform.rotation.to_euler(EulerRot::YXZ);
+        let (bike_yaw, _, bike_roll) = bike_transform.rotation.to_euler(EulerRot::YXZ);
+        // Rolled up a tube's side with its road (the bike itself turns
+        // over only there: its lean is a child's).
+        let in_a_tube = state.ride.is_none() && bike_roll.abs() > TUBE_ROLL;
         let bike_yaw = match state.ride {
             Some(ride) => state.heading + ride.yaw,
             None => bike_yaw,
@@ -602,7 +609,9 @@ fn follow_player(
         let distance = DISTANCE.start.lerp(DISTANCE.end, speed_factor) + chase.surge;
         // Round a loop the camera turns over with the bike, behind and above
         // it in its own frame; off it, it comes back upright.
-        chase.tilt = if state.ride.is_some() {
+        // Round a tube it goes round with the bike too, inside the tube,
+        // the road under both.
+        chase.tilt = if state.ride.is_some() || in_a_tube {
             Some(loop_tilt(bike_transform.rotation, yaw, bike_yaw))
         } else {
             chase.tilt.and_then(|tilt| {

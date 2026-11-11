@@ -1093,6 +1093,9 @@ fn lay_out_whole(time: Res<Time<Real>>, circuits: Res<Circuits>, mut editor: Res
         banking: Vec::leak(editor.edit.spans.iter().map(Span::banking).collect()),
         branches: original.branches,
         narrows: original.narrows,
+        pads: original.pads,
+        recharges: original.recharges,
+        tubes: original.tubes,
         wall: original.wall,
     };
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Track::new(&layout))) {

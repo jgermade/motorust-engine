@@ -2980,8 +2980,11 @@ pub mod tests {
             }
             // Next to the rock faces, the earth comes in before the walls;
             // indoors, on a flat floor, there is none.
+            // Nor on a circuit with no rock by its roads (one all on
+            // bridges).
+            let no_rock = circuit.scenery.cuttings.is_empty() && circuit.scenery.massifs.is_empty();
             assert!(
-                inside > 0 || circuit.scenery.soil == Soil::Floor,
+                inside > 0 || circuit.scenery.soil == Soil::Floor || no_rock,
                 "{}",
                 circuit.name
             );

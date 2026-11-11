@@ -40,6 +40,13 @@ pub struct Circuit {
     /// them are moved to its name as the circuits are read.
     #[serde(default, deserialize_with = "data::texts")]
     pub formerly: &'static [&'static str],
+    /// Whether its bikes hover over its road instead of rolling on it: each
+    /// of the roster is then the one of its that hovers, if it has one (see
+    /// [`crate::bike::Entry::design_on`]), what pulls a wheelie drifts
+    /// instead, and stopped they stand level (see
+    /// [`crate::bike::BikeTuning::hover`]).
+    #[serde(default)]
+    pub hover: bool,
     pub layout: Layout,
     pub scenery: Scenery,
 }

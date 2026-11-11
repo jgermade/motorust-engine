@@ -85,6 +85,7 @@ pub(super) struct Bones {
 }
 
 /// Esqueleto en reposo y lo que hace falta para posarlo.
+#[derive(Clone)]
 pub(super) struct Skeleton {
     joints: Vec<Joint>,
     bones: Bones,
@@ -164,6 +165,7 @@ impl Skeleton {
 
 /// Malla, material y esqueleto del piloto de una moto, compartidos por todas
 /// las motos de ese modelo.
+#[derive(Clone)]
 pub(super) struct PilotBlueprint {
     mesh: Handle<Mesh>,
     material: Handle<StandardMaterial>,
@@ -568,11 +570,12 @@ pub(super) fn pose_pilots(
         &ChassisRig,
         &mut Pilot,
         Option<&super::super::CrashState>,
+        Has<super::hover::Hovering>,
     )>,
     mut transforms: Query<&mut Transform>,
 ) {
     let dt = time.delta_secs();
-    for (state, input, geometry, rig, mut pilot, crash) in &mut bikes {
+    for (state, input, geometry, rig, mut pilot, crash, hovering) in &mut bikes {
         let Some(pilot_blueprint) = &blueprint.bodies[pilot.design.index()].pilot else {
             continue;
         };
@@ -609,7 +612,9 @@ pub(super) fn pose_pilots(
             super::look_angle(state, &tuning)
         };
         pilot.look = approach(pilot.look, look, POSE_RESPONSE, dt);
-        let stopped = if state.grounded && !is_crashing {
+        // Stopped, a foot goes down to hold the bike up; not off one that
+        // hovers, which stands level by itself.
+        let stopped = if state.grounded && !is_crashing && !hovering {
             (1.0 - state.speed.abs() / crate::bike::STOPPED_SPEED).clamp(0.0, 1.0)
         } else {
             0.0

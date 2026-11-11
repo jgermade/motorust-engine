@@ -122,6 +122,8 @@ pub fn ride(
         crest: -round * round / looped.radius,
         booster: 0.0,
         grip: 1.0,
+        pad: false,
+        recharge: false,
     };
     let mut next = step(state, &input, &ground, tuning, dt);
     // The tyres grip as hard as the surface presses on them, up to as hard

@@ -62,6 +62,8 @@ pub struct Settings {
     pub resolution: Resolution,
     pub fps: FpsLimit,
     pub language: Language,
+    /// What the speedometer counts in (Options > Game, under the language).
+    pub speed_units: SpeedUnits,
     pub controls: Controls,
     /// Volume of the sound effects and of the music (0 to 100 %), see
     /// [`crate::sound::fx_gain`] and [`crate::sound::music_gain`]. They are
@@ -181,6 +183,59 @@ pub struct Settings {
     /// [`crate::bench`]): never saved, and never saved over the player's.
     #[serde(skip)]
     pub transient: bool,
+}
+
+/// What speeds are counted in: kilometres or miles an hour.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
+pub enum SpeedUnits {
+    #[default]
+    Kmh,
+    Mph,
+}
+
+/// The units that can be chosen, in order.
+pub const SPEED_UNITS: [SpeedUnits; 2] = [SpeedUnits::Kmh, SpeedUnits::Mph];
+
+impl SpeedUnits {
+    /// How it is written.
+    pub fn label(self) -> &'static str {
+        match self {
+            SpeedUnits::Kmh => "km/h",
+            SpeedUnits::Mph => "mph",
+        }
+    }
+
+    /// A speed in m/s, in these units.
+    pub fn of(self, metres_a_second: f32) -> f32 {
+        metres_a_second
+            * match self {
+                SpeedUnits::Kmh => 3.6,
+                SpeedUnits::Mph => 3.6 / 1.609_344,
+            }
+    }
+
+    /// What the speedometer reads to in these units: 360 km/h or 240 mph,
+    /// or, for bikes that hover (`fast`), 600 km/h or 360 mph.
+    pub fn top(self, fast: bool) -> u32 {
+        match (self, fast) {
+            (SpeedUnits::Kmh, false) => 360,
+            (SpeedUnits::Mph, false) => 240,
+            (SpeedUnits::Kmh, true) => 600,
+            (SpeedUnits::Mph, true) => 360,
+        }
+    }
+
+    /// How far round the speedometer's scale a speed in these units goes,
+    /// as the km/h it would be at on a dial to 360 (see
+    /// [`crate::speedometer`]): the same dial reads to [`Self::top`].
+    pub fn on_dial(self, speed: f32, fast: bool) -> f32 {
+        speed * 360.0 / self.top(fast) as f32
+    }
+
+    /// The figure written at a mark of the dial (as km/h on a dial to 360).
+    pub fn mark(self, dial: u32, fast: bool) -> u32 {
+        dial * self.top(fast) / 360
+    }
 }
 
 /// How hard the races are.
@@ -395,6 +450,7 @@ impl Default for Settings {
             resolution: Resolution::default(),
             fps: FpsLimit::default(),
             language: Language::default(),
+            speed_units: SpeedUnits::default(),
             controls: Controls::default(),
             fx_volume: DEFAULT_VOLUME,
             music_volume: DEFAULT_VOLUME,
@@ -822,16 +878,19 @@ pub enum Action {
     Left,
     Right,
     Wheelie,
+    /// Where the bikes hover: the nitro (see `crate::bike::BikeState::nitro`).
+    Nitro,
     Restart,
     Pause,
 }
 
-pub const ACTIONS: [Action; 7] = [
+pub const ACTIONS: [Action; 8] = [
     Action::Throttle,
     Action::Brake,
     Action::Left,
     Action::Right,
     Action::Wheelie,
+    Action::Nitro,
     Action::Restart,
     Action::Pause,
 ];
@@ -844,6 +903,7 @@ impl Action {
             Action::Left => lang.action_left(),
             Action::Right => lang.action_right(),
             Action::Wheelie => lang.action_wheelie(),
+            Action::Nitro => lang.action_nitro(),
             Action::Restart => lang.restart(),
             Action::Pause => lang.action_pause(),
         }
@@ -924,6 +984,7 @@ pub struct Controls {
     pub left: Binding,
     pub right: Binding,
     pub wheelie: Binding,
+    pub nitro: Binding,
     pub restart: Binding,
     pub pause: Binding,
 }
@@ -933,11 +994,16 @@ impl Default for Controls {
         use GamepadButton as B;
         use KeyCode as K;
         Self {
-            throttle: Binding::new(&[K::KeyW, K::ArrowUp], &[B::RightTrigger2, B::South]),
-            brake: Binding::new(&[K::KeyS, K::ArrowDown], &[B::LeftTrigger2, B::West]),
+            // The triggers to go and to brake; the face buttons for the
+            // wheelie (the drift where the bikes hover) on X (Xbox) or
+            // square (PlayStation), and B or circle, and the nitro on A or
+            // cross.
+            throttle: Binding::new(&[K::KeyW, K::ArrowUp], &[B::RightTrigger2]),
+            brake: Binding::new(&[K::KeyS, K::ArrowDown], &[B::LeftTrigger2]),
             left: Binding::new(&[K::KeyA, K::ArrowLeft], &[B::DPadLeft]),
             right: Binding::new(&[K::KeyD, K::ArrowRight], &[B::DPadRight]),
-            wheelie: Binding::new(&[K::Space, K::ShiftLeft], &[B::East]),
+            wheelie: Binding::new(&[K::Space, K::ShiftLeft], &[B::West, B::East]),
+            nitro: Binding::new(&[K::KeyE, K::ControlLeft], &[B::South]),
             restart: Binding::new(&[K::KeyR], &[B::Select]),
             pause: Binding::new(&[K::Escape], &[B::Start]),
         }
@@ -952,6 +1018,7 @@ impl Controls {
             Action::Left => &self.left,
             Action::Right => &self.right,
             Action::Wheelie => &self.wheelie,
+            Action::Nitro => &self.nitro,
             Action::Restart => &self.restart,
             Action::Pause => &self.pause,
         }
@@ -964,6 +1031,7 @@ impl Controls {
             Action::Left => &mut self.left,
             Action::Right => &mut self.right,
             Action::Wheelie => &mut self.wheelie,
+            Action::Nitro => &mut self.nitro,
             Action::Restart => &mut self.restart,
             Action::Pause => &mut self.pause,
         }
@@ -972,6 +1040,27 @@ impl Controls {
     /// The wheelie used to have no gamepad button (it was the left stick
     /// pulled back): settings saved then get B, unless B already does
     /// something else.
+    /// Settings saved before the nitro had A (cross) on the throttle and X
+    /// (square) on the brake: once they get the nitro on A, A leaves the
+    /// throttle (which keeps its trigger) and X goes from the brake (which
+    /// keeps its) to the wheelie, the drift.
+    fn give_the_nitro_its_button(&mut self) {
+        let (south, west) = (GamepadButton::South, GamepadButton::West);
+        if self.nitro.buttons == [south] && self.throttle.buttons.contains(&south) {
+            self.throttle.buttons.retain(|&button| button != south);
+            if self.throttle.buttons.is_empty() {
+                self.throttle.buttons.push(GamepadButton::RightTrigger2);
+            }
+            if self.brake.buttons.contains(&west) && !self.wheelie.buttons.contains(&west) {
+                self.brake.buttons.retain(|&button| button != west);
+                if self.brake.buttons.is_empty() {
+                    self.brake.buttons.push(GamepadButton::LeftTrigger2);
+                }
+                self.wheelie.buttons.insert(0, west);
+            }
+        }
+    }
+
     fn give_the_wheelie_a_button(&mut self) {
         let east = GamepadButton::East;
         let taken = ACTIONS
@@ -1503,6 +1592,7 @@ impl Settings {
             settings.force_performance = ForcePerformance::Fps60;
         }
         settings.controls.give_the_wheelie_a_button();
+        settings.controls.give_the_nitro_its_button();
         // The curves were turned on with a box before the keyboard's
         // behaviour could be chosen.
         if text.contains("keyboard_curves_on: true") && !text.contains("keyboard_mode") {
@@ -2179,14 +2269,14 @@ mod tests {
         assert_eq!(controls.brake.keys, [KeyCode::KeyW, KeyCode::ArrowDown]);
         assert_eq!(controls.throttle.keys, [KeyCode::ArrowUp]);
         // Los botones van aparte: frenar sigue con los suyos.
-        assert_eq!(
-            controls.brake.buttons,
-            [GamepadButton::LeftTrigger2, GamepadButton::West]
-        );
-        // B, the wheelie's, becomes A, which stops accelerating.
+        assert_eq!(controls.brake.buttons, [GamepadButton::LeftTrigger2]);
+        // B, the wheelie's, becomes A, which stops doing the nitro.
         controls.remap(GamepadButton::East, &[GamepadButton::South]);
-        assert_eq!(controls.wheelie.buttons, [GamepadButton::South]);
-        assert_eq!(controls.throttle.buttons, [GamepadButton::RightTrigger2]);
+        assert_eq!(
+            controls.wheelie.buttons,
+            [GamepadButton::West, GamepadButton::South]
+        );
+        assert!(controls.nitro.buttons.is_empty());
         // A key that does nothing has nothing to remap.
         assert_eq!(controls.remap(KeyCode::KeyK, &[KeyCode::KeyL]), None);
     }
@@ -2229,7 +2319,7 @@ mod tests {
         controls.remap(GamepadButton::South, &[GamepadButton::North]);
         controls.reset::<KeyCode>();
         assert_eq!(controls.throttle.keys, Controls::default().throttle.keys);
-        assert!(controls.throttle.buttons.contains(&GamepadButton::North));
+        assert!(controls.nitro.buttons.contains(&GamepadButton::North));
         controls.reset::<GamepadButton>();
         assert_eq!(controls, Controls::default());
     }
@@ -2527,7 +2617,8 @@ mod tests {
         );
         let controls = Controls::default();
         assert_eq!(controls.describe_keys(Action::Throttle, es), "W, Arriba");
-        assert_eq!(controls.describe_buttons(Action::Throttle, es), "RT, A");
+        assert_eq!(controls.describe_buttons(Action::Throttle, es), "RT");
+        assert_eq!(controls.describe_buttons(Action::Nitro, es), "A");
         assert_eq!(
             controls.describe_keys(Action::Throttle, Language::English),
             "W, Up"
@@ -2536,7 +2627,7 @@ mod tests {
             controls.describe_keys(Action::Wheelie, es),
             "Espacio, Mayús izq."
         );
-        assert_eq!(controls.describe_buttons(Action::Wheelie, es), "B");
+        assert_eq!(controls.describe_buttons(Action::Wheelie, es), "X, B");
     }
 
     #[test]
@@ -2552,5 +2643,37 @@ mod tests {
         taken.give_the_wheelie_a_button();
         assert!(taken.wheelie.buttons.is_empty());
         assert_eq!(taken.brake.buttons, [GamepadButton::East]);
+    }
+
+    #[test]
+    fn the_nitro_is_on_a_and_the_drift_on_x_even_in_settings_saved_before() {
+        use GamepadButton as B;
+        let fresh = Controls::default();
+        assert_eq!(fresh.nitro.buttons, [B::South]);
+        assert_eq!(fresh.wheelie.buttons, [B::West, B::East]);
+        assert_eq!(fresh.throttle.buttons, [B::RightTrigger2]);
+        assert_eq!(fresh.brake.buttons, [B::LeftTrigger2]);
+        assert_eq!(fresh.action_of(B::South), Some(Action::Nitro));
+        assert_eq!(fresh.action_of(B::West), Some(Action::Wheelie));
+        // Saved before: A on the throttle, X on the brake.
+        let mut saved = Controls {
+            throttle: Binding::new(&[KeyCode::KeyW], &[B::RightTrigger2, B::South]),
+            brake: Binding::new(&[KeyCode::KeyS], &[B::LeftTrigger2, B::West]),
+            wheelie: Binding::new(&[KeyCode::Space], &[B::East]),
+            ..Controls::default()
+        };
+        saved.give_the_nitro_its_button();
+        assert_eq!(saved.action_of(B::South), Some(Action::Nitro));
+        assert_eq!(saved.action_of(B::West), Some(Action::Wheelie));
+        assert_eq!(saved.throttle.buttons, [B::RightTrigger2]);
+        assert_eq!(saved.brake.buttons, [B::LeftTrigger2]);
+        // Remapped since by the player: left as they are.
+        let mut chosen = Controls {
+            nitro: Binding::new(&[KeyCode::KeyE], &[B::North]),
+            ..saved.clone()
+        };
+        let before = chosen.clone();
+        chosen.give_the_nitro_its_button();
+        assert_eq!(chosen, before);
     }
 }

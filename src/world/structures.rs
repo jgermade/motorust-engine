@@ -10,8 +10,8 @@ use super::lamps::Lamp;
 use super::lettering::sign_image;
 use super::quads::MeshBuilder;
 use super::scenery::{
-    Billboard, BrakeMarker, BridgeStyle, ChevronDirection, ChevronSign, FlowerKind, Scenery, Soil,
-    Span,
+    Billboard, BrakeMarker, BridgeStyle, ChevronDirection, ChevronSign, FlowerKind, Paving,
+    Scenery, Soil, Span,
 };
 use super::terrain::{CLIFF_NORMAL_Y, GRASS_TILE, Ground, GroundMesh, Terrain};
 use super::textures::{PLANK_BOARD, PLANK_GAP, WorldTextures};
@@ -123,6 +123,23 @@ pub fn structure_pieces(
         }
         let indices = indices(track, *tunnel, lap);
         let mut parts = tunnel_meshes(track, terrain, scenery.soil, &indices);
+        // Under a road of plates, a race track's tunnel: dark panels, its
+        // lamps and their light in the circuit's first curb colour, and a
+        // ring of that light round it every few metres.
+        let raceway = (scenery.paving == Paving::Plates).then_some(scenery.curbs[0]);
+        if let Some(light) = raceway {
+            for lamp in &mut parts.lamps {
+                lamp.color = light.mix(&Color::WHITE, 0.35);
+            }
+            pieces.push((
+                tunnel_rings(track, &indices),
+                StandardMaterial {
+                    base_color: light,
+                    emissive: light.to_linear() * RING_GLOW,
+                    ..default()
+                },
+            ));
+        }
         // Drawn as voxels, the rock over the tunnel is painted as the
         // ground's blocks are, and nothing is textured (see `voxel_tunnel`).
         let voxel = scenery.look.voxel_size();
@@ -168,6 +185,14 @@ pub fn structure_pieces(
         // earth, a cave of it; in a lunar station, pressurized metallic hull
         // panels lit by cool cyan-white strips.
         let lining = match scenery.soil {
+            _ if raceway.is_some() => StandardMaterial {
+                base_color: Color::srgb(0.2, 0.22, 0.27),
+                base_color_texture: Some(textures.panels.clone()),
+                emissive: LinearRgba::rgb(0.01, 0.015, 0.03),
+                perceptual_roughness: 0.45,
+                metallic: 0.3,
+                ..default()
+            },
             Soil::Rock | Soil::Mine | Soil::Granite | Soil::Floor => StandardMaterial {
                 base_color: Color::srgb(0.95, 0.78, 0.52),
                 base_color_texture: Some(textures.panels.clone()),
@@ -191,7 +216,9 @@ pub fn structure_pieces(
             },
         };
         let concrete = StandardMaterial {
-            base_color: if scenery.soil == Soil::Lunar {
+            base_color: if raceway.is_some() {
+                Color::srgb(0.24, 0.26, 0.3)
+            } else if scenery.soil == Soil::Lunar {
                 Color::srgb(0.66, 0.70, 0.78)
             } else {
                 Color::srgb(0.75, 0.73, 0.7)
@@ -200,7 +227,13 @@ pub fn structure_pieces(
             perceptual_roughness: 0.9,
             ..default()
         };
-        let lights = if scenery.soil == Soil::Lunar {
+        let lights = if let Some(light) = raceway {
+            StandardMaterial {
+                base_color: light,
+                emissive: light.to_linear() * RING_GLOW,
+                ..default()
+            }
+        } else if scenery.soil == Soil::Lunar {
             StandardMaterial {
                 base_color: Color::srgb(0.78, 0.94, 1.0),
                 emissive: LinearRgba::rgb(3.2, 5.4, 7.5),
@@ -226,7 +259,10 @@ pub fn structure_pieces(
         };
         // The lamps' light, added over what it falls on.
         let pools = StandardMaterial {
-            base_color: if scenery.soil == Soil::Lunar {
+            base_color: if let Some(light) = raceway {
+                let light = light.to_srgba();
+                Color::srgb(0.4 * light.red, 0.4 * light.green, 0.4 * light.blue)
+            } else if scenery.soil == Soil::Lunar {
                 Color::srgb(0.18, 0.32, 0.46)
             } else {
                 POOL_COLOR
@@ -275,6 +311,7 @@ pub fn structure_pieces(
                 | BridgeStyle::SlotTrack
                 | BridgeStyle::OrangeTrack
                 | BridgeStyle::Slide
+                | BridgeStyle::Tube
         ) {
             continue;
         }
@@ -301,28 +338,95 @@ pub fn structure_pieces(
             ));
             continue;
         }
-        let (deck, steel) = if bridge.style == BridgeStyle::Truss {
-            truss_bridge_meshes(track, terrain, &indices)
-        } else {
-            bridge_meshes(track, terrain, &indices)
+        if bridge.style == BridgeStyle::Skyway {
+            let light = scenery.curbs[0];
+            let (strips, hung) = skyway_lamps(track, &indices, light);
+            lamps.extend(hung);
+            pieces.push((
+                strips,
+                StandardMaterial {
+                    base_color: light,
+                    emissive: light.to_linear() * RING_GLOW,
+                    ..default()
+                },
+            ));
+        }
+        let (deck, steel) = match bridge.style {
+            BridgeStyle::Truss => truss_bridge_meshes(track, terrain, &indices),
+            BridgeStyle::Skyway => skyway_meshes(track, track, terrain, &indices),
+            _ => bridge_meshes(track, terrain, &indices),
         };
         pieces.push((
             deck,
             StandardMaterial {
-                base_color: Color::srgb(0.7, 0.7, 0.68),
+                base_color: match bridge.style {
+                    BridgeStyle::Skyway => SKYWAY_DECK,
+                    _ => Color::srgb(0.7, 0.7, 0.68),
+                },
                 base_color_texture: Some(textures.plaster.clone()),
                 perceptual_roughness: 0.9,
                 ..default()
             },
         ));
-        pieces.push((
-            steel,
-            StandardMaterial {
-                perceptual_roughness: 0.45,
-                metallic: 0.2,
-                ..default()
-            },
-        ));
+        if steel.count_vertices() > 0 {
+            pieces.push((
+                steel,
+                StandardMaterial {
+                    perceptual_roughness: 0.45,
+                    metallic: 0.2,
+                    ..default()
+                },
+            ));
+        }
+    }
+    // The ways off the lap where it is a skyway: theirs too, where they are
+    // apart from it, with their masts and lamps.
+    let skyway = |along: f32| {
+        scenery
+            .bridges
+            .iter()
+            .any(|bridge| bridge.style == BridgeStyle::Skyway && bridge.span.contains(along, lap))
+    };
+    for fork in track.forks() {
+        let road = track.road(fork.road);
+        let on = |i: usize| road.apart_at(i) >= 1.0 && skyway(road.lap_along_at(i));
+        let mut runs: Vec<Vec<usize>> = Vec::new();
+        for i in 0..road.sample_count() {
+            match runs.last_mut() {
+                Some(run) if on(i) && run.last() == Some(&(i - 1)) => run.push(i),
+                _ if on(i) => runs.push(vec![i]),
+                _ => {}
+            }
+        }
+        for run in runs.into_iter().filter(|run| run.len() > 2) {
+            if !wanted(&Span {
+                from: road.lap_along_at(run[0]),
+                to: road.lap_along_at(run[run.len() - 1]),
+            }) {
+                continue;
+            }
+            let light = scenery.curbs[0];
+            let (strips, hung) = skyway_lamps(road, &run, light);
+            lamps.extend(hung);
+            pieces.push((
+                strips,
+                StandardMaterial {
+                    base_color: light,
+                    emissive: light.to_linear() * RING_GLOW,
+                    ..default()
+                },
+            ));
+            let (deck, _) = skyway_meshes(track, road, terrain, &run);
+            pieces.push((
+                deck,
+                StandardMaterial {
+                    base_color: SKYWAY_DECK,
+                    base_color_texture: Some(textures.plaster.clone()),
+                    perceptual_roughness: 0.9,
+                    ..default()
+                },
+            ));
+        }
     }
     // What the circuit's themes build (see `super::themes`).
     for (_, theme) in scenery.themes.iter() {
@@ -994,6 +1098,151 @@ fn concrete_deck(
     deck
 }
 
+/// A race track's tunnel's rings of light (see [`tunnel_rings`]): one every
+/// so many points of the lap, how thick they are (m), how far in from the
+/// tunnel's walls and under its roof, and how bright over their colour.
+const RING_EVERY: usize = 8;
+const RING_THICK: f32 = 0.22;
+const RING_INSET: f32 = 0.2;
+const RING_GLOW: f32 = 6.0;
+
+/// The rings of light of a race track's tunnel along the points `indices`
+/// of the lap: at every few, a strip up each wall and across under the
+/// roof, round the road.
+fn tunnel_rings(track: &Track, indices: &[usize]) -> Mesh {
+    let mut rings = MeshBuilder::default();
+    let side = WALL_DISTANCE - RING_INSET;
+    let top = TUNNEL_HEIGHT - RING_INSET;
+    for &i in indices.iter().step_by(RING_EVERY).skip(1) {
+        let at = |lateral: f32, up: f32| track.surface_point(i, lateral) + Vec3::Y * up;
+        // Level across under the roof, from the higher of its two feet.
+        let roof = at(side, top).y.max(at(-side, top).y);
+        let corner = |lateral: f32| {
+            let foot = at(lateral, 0.0);
+            Vec3::new(foot.x, roof, foot.z)
+        };
+        for lateral in [side, -side] {
+            rings.beam(
+                at(lateral, 0.0),
+                corner(lateral),
+                RING_THICK,
+                RING_THICK,
+                Color::WHITE,
+            );
+        }
+        rings.beam(
+            corner(side),
+            corner(-side),
+            RING_THICK,
+            RING_THICK,
+            Color::WHITE,
+        );
+    }
+    rings.build()
+}
+
+/// A skyway's deck, pale concrete, standing out against the dark city it
+/// runs through, and how many points of the lap apart its pylons stand.
+const SKYWAY_DECK: Color = Color::srgb(0.82, 0.84, 0.87);
+const SKYWAY_PIER_EVERY: usize = 24;
+/// How high its masts rise over the deck (m), how many points of the lap
+/// ahead and behind their stays reach, and how bright the lamp under each
+/// beam is.
+const SKYWAY_MAST: f32 = 13.0;
+const SKYWAY_STAY: usize = 9;
+const SKYWAY_LUMENS: f32 = 1_400_000.0;
+
+/// A skyway: its deck on pairs of pylons every so often, and nothing more
+/// (the second mesh is empty).
+fn skyway_meshes(
+    whole: &Track,
+    track: &Track,
+    terrain: &Terrain,
+    indices: &[usize],
+) -> (Mesh, Mesh) {
+    let last = indices.len() - 1;
+    let piers: Vec<usize> = (0..=last)
+        .step_by(SKYWAY_PIER_EVERY)
+        .chain(std::iter::once(last))
+        .collect();
+    // No pillar down onto a road passing under the deck (the lap, or a way
+    // off it, or the lap under a way off it): the deck spans it.
+    let pillars: Vec<usize> = piers
+        .iter()
+        .copied()
+        .filter(|&k| {
+            [-1.0, 0.0, 1.0].iter().all(|side| {
+                let top = track.surface_point(indices[k], side * WALL_DISTANCE);
+                !whole.road_under(Vec2::new(top.x, top.z), top.y)
+            })
+        })
+        .collect();
+    let mut deck = concrete_deck(track, terrain, indices, &pillars);
+    // What it is built on, in sight from the road: at each pair of pylons
+    // a mast either side, rising over the deck, a beam across between
+    // their tops, and stays from the tops down to the deck's edges ahead
+    // and behind.
+    let lateral = WALL_DISTANCE + 2.2;
+    for (number, &k) in piers.iter().enumerate() {
+        let i = indices[k];
+        let foot = |side: f32| track.surface_point(i, side * lateral);
+        let top = |side: f32| foot(side) + Vec3::Y * SKYWAY_MAST;
+        for side in [-1.0, 1.0] {
+            deck.beam(
+                foot(side) - Vec3::Y * DECK_DEPTH,
+                top(side),
+                1.4,
+                1.4,
+                Color::WHITE,
+            );
+            // Stays, at every other mast: to the deck's edge well ahead and
+            // behind.
+            if number % 2 == 0 {
+                for reach in [-(SKYWAY_STAY as isize), SKYWAY_STAY as isize] {
+                    let at = (k as isize + reach).clamp(0, last as isize) as usize;
+                    deck.beam(
+                        top(side) - Vec3::Y * 0.5,
+                        track.surface_point(indices[at], side * lateral),
+                        0.22,
+                        0.22,
+                        Color::WHITE,
+                    );
+                }
+            }
+        }
+        deck.beam(
+            top(-1.0) - Vec3::Y * 0.6,
+            top(1.0) - Vec3::Y * 0.6,
+            1.0,
+            1.2,
+            Color::WHITE,
+        );
+    }
+    (deck.build(), MeshBuilder::default().build())
+}
+
+/// The lamps of a skyway along the points `indices` of the lap: one under
+/// the beam of each pair of masts, over the middle of the road, and the
+/// strip of light they hang as (the mesh).
+fn skyway_lamps(track: &Track, indices: &[usize], color: Color) -> (Mesh, Vec<Lamp>) {
+    let last = indices.len() - 1;
+    let mut strips = MeshBuilder::default();
+    let mut lamps = Vec::new();
+    let lateral = WALL_DISTANCE + 1.2;
+    for k in (0..=last).step_by(SKYWAY_PIER_EVERY) {
+        let i = indices[k];
+        let under = Vec3::Y * (SKYWAY_MAST - 1.35);
+        let at = |side: f32| track.surface_point(i, side * lateral) + under;
+        strips.beam(at(-1.0), at(1.0), 0.5, 0.25, Color::WHITE);
+        lamps.push(Lamp {
+            at: track.surface_point(i, 0.0) + under,
+            color: color.mix(&Color::WHITE, 0.5),
+            lumens: SKYWAY_LUMENS,
+        });
+    }
+    (strips.build(), lamps)
+}
+
 /// A steel truss bridge: a concrete deck (the first mesh) on piers, and two
 /// through trusses (the second), one along each edge of the deck, with a top
 /// chord over sloping end posts, a post at every panel point and diagonals
@@ -1607,9 +1856,11 @@ pub mod tests {
                     | BridgeStyle::OldWooden
                     | BridgeStyle::SlotTrack
                     | BridgeStyle::OrangeTrack
+                    | BridgeStyle::Tube
                     | BridgeStyle::Slide => continue,
                     BridgeStyle::RedArches => bridge_meshes(&track, &terrain, &indices),
                     BridgeStyle::Truss => truss_bridge_meshes(&track, &terrain, &indices),
+                    BridgeStyle::Skyway => skyway_meshes(&track, &track, &terrain, &indices),
                     // A dam's crest is the dam's own concrete.
                     BridgeStyle::Dam => {
                         let dam = scenery

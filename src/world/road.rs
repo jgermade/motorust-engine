@@ -9,7 +9,7 @@ use bevy::{
 use super::Assets3d;
 use super::lettering::sign_image;
 use super::quads::MeshBuilder;
-use super::scenery::{BridgeStyle, Gantry, Scenery, Side, Soil, Span, WallStyle};
+use super::scenery::{BridgeStyle, Gantry, Paving, Scenery, Side, Soil, Span, WallStyle};
 use super::terrain::{Terrain, shaded};
 use super::textures::{STONE_WALL, WorldTextures};
 use crate::geometry::{fbm, smoothstep};
@@ -57,6 +57,357 @@ fn arcade_wall_color(style: WallStyle, band: usize, up: f32) -> Option<Color> {
     let c = color.to_srgba();
     Some(Color::srgb(c.red * shade, c.green * shade, c.blue * shade))
 }
+/// A road of plates (see [`Paving::Plates`]): its two greys, a plate this
+/// many points of the lap long;
+const PLATES: [Color; 2] = [Color::srgb(0.5, 0.54, 0.6), Color::srgb(0.4, 0.44, 0.5)];
+const PLATE_POINTS: usize = 4;
+/// its dark panels, from and to these shares of the road's half width
+/// either side, over these points of every so many;
+const PANEL: Color = Color::srgb(0.13, 0.14, 0.17);
+const PANEL_ACROSS: (f32, f32) = (0.2, 0.72);
+const PANEL_POINTS: std::ops::Range<usize> = 1..5;
+const PANEL_EVERY: usize = 6;
+/// its spine down the middle, this wide either side (m);
+const SPINE: Color = Color::srgb(0.24, 0.27, 0.32);
+const SPINE_HALF: f32 = 0.35;
+/// a band of amber across it every so many points;
+const AMBER: Color = Color::srgb(0.95, 0.7, 0.08);
+const AMBER_EVERY: usize = 30;
+/// and how wide the strips of light along its edges are (m).
+const EDGE_LIGHT: f32 = 0.3;
+/// How a stretch of a road of plates is laid out (see [`plate_design`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PlateDesign {
+    /// Grey plates in two shades, dark panels let into them either side of
+    /// a spine.
+    Panels,
+    /// A dark road with chevrons of amber pointing the way of the race.
+    Hazard,
+    /// A black road with three lines of light along it, in the circuit's
+    /// first curb colour.
+    Neon,
+    /// Pale plates, nearly white, with dark chevrons.
+    Pale,
+    /// A blue-grey road in lanes: a pale line either side of the middle
+    /// one, dashes of amber down it.
+    Lanes,
+    /// A black road with bars of light across it, in the circuit's second
+    /// curb colour: where it fills the nitro (see
+    /// [`crate::track::Recharge`]), and only there.
+    Bars,
+}
+
+/// How long a stretch of one design is (m), and the designs in the order
+/// they come round the lap: never two alike in a row, dark after light.
+const DESIGN_LENGTH: f32 = 220.0;
+const DESIGNS: [PlateDesign; 7] = [
+    PlateDesign::Panels,
+    PlateDesign::Neon,
+    PlateDesign::Pale,
+    PlateDesign::Hazard,
+    PlateDesign::Lanes,
+    PlateDesign::Pale,
+    PlateDesign::Neon,
+];
+/// The black of the roads with lights of their own, and the pale plates'
+/// two shades.
+const CARBON: Color = Color::srgb(0.06, 0.065, 0.08);
+const PALE: [Color; 2] = [Color::srgb(0.82, 0.84, 0.88), Color::srgb(0.72, 0.75, 0.8)];
+/// The lanes' lines' place across the road (shares of its
+/// half width), and the chevrons': in how many strips across each half
+/// they are laid, a stripe so many points long of every so many.
+const LANE_ACROSS: f32 = 0.34;
+const CHEVRON_STRIPS: usize = 6;
+const CHEVRON_EVERY: usize = 8;
+const CHEVRON_POINTS: usize = 3;
+
+/// The design of a road of plates `along` metres along it: stretch after
+/// stretch its own, so that no two parts of a lap look alike for long.
+pub fn plate_design(along: f32) -> PlateDesign {
+    DESIGNS[(along.max(0.0) / DESIGN_LENGTH) as usize % DESIGNS.len()]
+}
+
+/// How bright a strip of light is over its colour.
+const STRIP_GLOW: f32 = 5.0;
+/// A race track's barrier (see [`WallStyle::Barrier`]): how high it stands
+/// and its skirt reaches (m), how long the skirt's bands are (m), and
+/// where the strip of light along its top lies: how far out from the
+/// wall's face and how wide (m).
+const BARRIER_HEIGHT: f32 = 1.1;
+const BARRIER_SKIRT: f32 = 0.3;
+const BARRIER_BAND: f32 = 3.0;
+const BARRIER_LIGHT: (f32, f32) = (0.2, 0.3);
+
+/// A tube of glass (see [`BridgeStyle::Tube`]): its glass, in how many
+/// strips round it is laid, a hoop of light every so many points of the
+/// lap, and how wide a hoop is (m along the road).
+const TUBE_GLASS: Color = Color::srgba(0.55, 0.8, 1.0, 0.16);
+const TUBE_STRIPS: usize = 28;
+const HOOP_EVERY: usize = 6;
+const HOOP_WIDTH: f32 = 0.35;
+/// How thick the tube is: its hoops and the rails along it stand this far
+/// out of its glass (m); a rail along it every so many strips round.
+const TUBE_THICK: f32 = 0.45;
+const RAIL_EVERY: usize = 7;
+const RAIL_WIDTH: f32 = 0.3;
+/// How wide a strip of the road's paint is at most where it curls up into
+/// a tube (m).
+const TUBE_STRIP: f32 = 0.8;
+
+/// The glass of a tube round the points of `road` where `glazed` says,
+/// from the edge of its plates either side up and over to its seam, and
+/// the hoops of light round it.
+fn tube_meshes(road: Road, glazed: impl Fn(usize) -> bool) -> (Mesh, Mesh) {
+    let line = road.line();
+    let (mut glass, mut hoops) = (MeshBuilder::default(), MeshBuilder::default());
+    let half = line.half_width();
+    for index in (0..line.segment_count()).filter(|&index| glazed(index)) {
+        let at = |i: usize, share: f32, side: f32| {
+            // From the plates' edge to the tube's top at that point (or, where
+            // it is still curling up, as far as its walls are).
+            let top = match line.roll_at(i) {
+                roll if roll > 1e-5 => (std::f32::consts::PI / roll).min(line.wall_at(i)),
+                _ => line.wall_at(i),
+            };
+            let lateral = side * half.lerp(top, share);
+            road.surface_point(i, lateral) + Vec3::Y * SURFACE_Y
+        };
+        for side in [1.0, -1.0] {
+            for strip in 0..TUBE_STRIPS {
+                let (a, b) = (
+                    strip as f32 / TUBE_STRIPS as f32,
+                    (strip + 1) as f32 / TUBE_STRIPS as f32,
+                );
+                let corners = [
+                    at(index, a, side),
+                    at(index + 1, a, side),
+                    at(index + 1, b, side),
+                    at(index, b, side),
+                ];
+                let normal = (corners[1] - corners[0]).cross(corners[3] - corners[0]) * side;
+                glass.quad(
+                    corners.map(|corner| (corner, Vec2::ZERO)),
+                    normal.normalize_or_zero(),
+                    Color::WHITE,
+                );
+                // Its frame, standing out of the glass: a hoop round it
+                // every few metres and rails along it, each a beam with
+                // its own thickness.
+                let out = -normal.normalize_or_zero() * (TUBE_THICK / 2.0);
+                if index % HOOP_EVERY == 0 {
+                    hoops.beam(
+                        corners[0] + out,
+                        corners[3] + out,
+                        HOOP_WIDTH,
+                        TUBE_THICK,
+                        Color::WHITE,
+                    );
+                }
+                if strip % RAIL_EVERY == RAIL_EVERY - 1 {
+                    hoops.beam(
+                        corners[3] + out,
+                        corners[2] + out,
+                        RAIL_WIDTH,
+                        TUBE_THICK,
+                        Color::WHITE,
+                    );
+                }
+            }
+        }
+    }
+    roof_tube(&road, &glazed, &mut glass, &mut hoops);
+    (glass.build(), hoops.build())
+}
+
+/// How many strips across a tube's glass roof is, where the road has yet
+/// to close into it.
+const ROOF_STRIPS: usize = 18;
+
+/// Where the glass of a tube does not close over the road (along its way in
+/// and out, where the road is still curling up, and where it is glazed
+/// before it curls at all), a roof of glass over it: an arch from the top
+/// edge of the glass on one side to the other's, as high at its top as the
+/// tube is, with its hoops: the way into the tube and out of it closed
+/// round the riders.
+fn roof_tube(
+    road: &Road,
+    glazed: &impl Fn(usize) -> bool,
+    glass: &mut MeshBuilder,
+    hoops: &mut MeshBuilder,
+) {
+    let line = road.line();
+    let indices: Vec<usize> = (0..line.segment_count()).filter(|&i| glazed(i)).collect();
+    let curl = indices
+        .iter()
+        .map(|&i| line.roll_at(i))
+        .fold(0.0_f32, f32::max);
+    if indices.is_empty() || curl < 1e-5 {
+        return;
+    }
+    // As high as the tube: its diameter over the road.
+    let apex = 2.0 / curl;
+    let edge = |i: usize, side: f32| {
+        let top = match line.roll_at(i) {
+            roll if roll > 1e-5 => (std::f32::consts::PI / roll).min(line.wall_at(i)),
+            _ => line.wall_at(i),
+        };
+        road.surface_point(i, side * top) + Vec3::Y * SURFACE_Y
+    };
+    // The arch at point `i`: `ROOF_STRIPS + 1` points from the right edge
+    // over to the left, if the glass is open there.
+    let arch = |i: usize| -> Option<Vec<Vec3>> {
+        if line.roll_at(i) * line.wall_at(i) >= std::f32::consts::PI {
+            return None;
+        }
+        let middle = road.surface_point(i, 0.0) + Vec3::Y * SURFACE_Y;
+        let across = (road.surface_point(i, 1.0) - road.surface_point(i, 0.0))
+            .with_y(0.0)
+            .normalize_or_zero();
+        let (right, left) = (edge(i, -1.0), edge(i, 1.0));
+        let offset = |p: Vec3| ((p - middle).dot(across).abs(), p.y - middle.y);
+        let ((wr, er), (wl, el)) = (offset(right), offset(left));
+        let (w, e) = ((wr + wl) / 2.0, (er + el) / 2.0);
+        if apex <= e + 0.5 {
+            return None;
+        }
+        // The circle through both edges and the apex over the middle.
+        let centre = (apex * apex - w * w - e * e) / (2.0 * (apex - e));
+        let radius = apex - centre;
+        let from = (e - centre).atan2(w);
+        let to = std::f32::consts::PI - from;
+        Some(
+            (0..=ROOF_STRIPS)
+                .map(|k| {
+                    let angle = from + (to - from) * k as f32 / ROOF_STRIPS as f32;
+                    middle
+                        + across * radius * angle.cos()
+                        + Vec3::Y * (centre + radius * angle.sin())
+                })
+                .collect(),
+        )
+    };
+    for &index in &indices {
+        let (Some(here), Some(next)) = (arch(index), arch(index + 1)) else {
+            continue;
+        };
+        for k in 0..ROOF_STRIPS {
+            let corners = [here[k], next[k], next[k + 1], here[k + 1]];
+            let normal = (corners[1] - corners[0]).cross(corners[3] - corners[0]);
+            glass.quad(
+                corners.map(|corner| (corner, Vec2::ZERO)),
+                normal.normalize_or_zero(),
+                Color::WHITE,
+            );
+            let out = normal.normalize_or_zero() * (TUBE_THICK / 2.0);
+            if index % HOOP_EVERY == 0 {
+                hoops.beam(
+                    here[k] + out,
+                    here[k + 1] + out,
+                    HOOP_WIDTH,
+                    TUBE_THICK,
+                    Color::WHITE,
+                );
+            }
+            if k % RAIL_EVERY == RAIL_EVERY - 1 {
+                hoops.beam(
+                    here[k + 1] + out,
+                    next[k + 1] + out,
+                    RAIL_WIDTH,
+                    TUBE_THICK,
+                    Color::WHITE,
+                );
+            }
+        }
+    }
+}
+
+/// A speed pad (see [`crate::track::SpeedPad`]): its dark plate, a little
+/// over the road's paint, and the chevrons of light on it pointing the way
+/// of the race, how many, how long along the road each arm reaches, and how
+/// thick.
+const PAD_PLATE: Color = Color::srgb(0.05, 0.06, 0.07);
+const PAD_LIGHT: Color = Color::srgb(0.45, 1.0, 0.3);
+const PAD_LIFT: f32 = 3.0 * PAINT_LIFT;
+const PAD_CHEVRONS: usize = 3;
+const PAD_POINT: f32 = 1.6;
+const PAD_STROKE: f32 = 0.7;
+
+/// The plates of `track`'s speed pads, and their chevrons of light.
+fn pad_meshes(track: &Track) -> (Mesh, Mesh) {
+    use crate::track::{PAD_LENGTH, PAD_WIDTH};
+    let (mut plates, mut chevrons) = (MeshBuilder::default(), MeshBuilder::default());
+    let step = track.step_length();
+    // A point of the road's surface `along` metres from the line and
+    // `lateral` to the left of its centre line, a little over it.
+    let at = |along: f32, lateral: f32, lift: f32| {
+        let along = along.rem_euclid(track.lap_length());
+        let i = (along / step).floor() as usize;
+        let t = along / step - i as f32;
+        track
+            .surface_point(i, lateral)
+            .lerp(track.surface_point(i + 1, lateral), t)
+            + Vec3::Y * (SURFACE_Y + lift)
+    };
+    let half = PAD_WIDTH / 2.0;
+    for pad in track.pads() {
+        let quad = |mesh: &mut MeshBuilder, corners: [(f32, f32); 4], lift: f32| {
+            mesh.quad(
+                corners.map(|(along, lateral)| {
+                    (
+                        at(pad.along + along, pad.lateral + lateral, lift),
+                        Vec2::ZERO,
+                    )
+                }),
+                Vec3::Y,
+                Color::WHITE,
+            );
+        };
+        // The plate, in pieces as long as the road's, so it follows it.
+        let pieces = (PAD_LENGTH / step).ceil() as usize;
+        for k in 0..pieces {
+            let (a, b) = (
+                PAD_LENGTH * k as f32 / pieces as f32,
+                PAD_LENGTH * (k + 1) as f32 / pieces as f32,
+            );
+            quad(
+                &mut plates,
+                [(a, -half), (b, -half), (b, half), (a, half)],
+                PAD_LIFT,
+            );
+        }
+        // The chevrons: each two arms from the plate's edges forward to
+        // its middle.
+        let room = PAD_LENGTH / PAD_CHEVRONS as f32;
+        for c in 0..PAD_CHEVRONS {
+            let back = room * c as f32 + (room - PAD_POINT - PAD_STROKE) / 2.0;
+            let edge = half - 0.3;
+            for side in [-1.0, 1.0] {
+                quad(
+                    &mut chevrons,
+                    [
+                        (back, side * edge),
+                        (back + PAD_POINT, 0.0),
+                        (back + PAD_POINT + PAD_STROKE, 0.0),
+                        (back + PAD_STROKE, side * edge),
+                    ],
+                    PAD_LIFT + PAINT_LIFT,
+                );
+            }
+        }
+    }
+    (plates.build(), chevrons.build())
+}
+
+/// The material of a strip of light of `color`: lit of its own.
+fn light_strip(color: Color) -> StandardMaterial {
+    StandardMaterial {
+        base_color: color,
+        emissive: color.to_linear() * STRIP_GLOW,
+        perceptual_roughness: 0.4,
+        ..default()
+    }
+}
+
 const LINE_WIDTH: f32 = 0.25;
 /// Distancia del borde del asfalto a la línea blanca lateral.
 const EDGE_LINE_INSET: f32 = 0.45;
@@ -150,6 +501,7 @@ pub fn road_pieces(
     // Huellas de derrape y frenada en las curvas para dar dinamismo al asfalto
     // (not on a toy's clean plastic, indoors).
     if scenery.soil != Soil::Floor
+        && scenery.paving == Paving::Asphalt
         && let Some(skids) = skid_marks(track)
     {
         spawn(
@@ -179,6 +531,9 @@ pub fn spawn_gantries(
         .iter()
         .filter(|gantry| gantry.drawn)
         .filter(|gantry| within.is_none_or(|stretch| stretch.contains(gantry.along, lap)))
+        // None inside a tube, where an arch over the road has nowhere to
+        // stand: its checkpoint is there all the same.
+        .filter(|gantry| track.roll_at(track.index_at(gantry.along)) < 1e-5)
     {
         spawn_gantry(world, track, gantry, assets);
     }
@@ -215,17 +570,23 @@ impl<'a> Road<'a> {
         }
     }
 
-    /// Whether `point` is on the asphalt (or the curbs) of another road.
-    fn on_other_asphalt(&self, point: Vec2) -> bool {
-        self.track.on_other_road(self.number, point, |road, _| {
-            road.half_width() + CURB_WIDTH - 0.1
-        })
+    /// Whether `point`, beside point `index` of this road, is on the
+    /// asphalt (or the curbs) of another road at its level: not one a
+    /// storey over or under it, where one crosses the other.
+    fn on_other_asphalt(&self, point: Vec2, index: usize) -> bool {
+        let height = self.surface_point(index, 0.0).y;
+        self.track
+            .on_other_road_at(self.number, point, height, |road, _| {
+                road.half_width() + CURB_WIDTH - 0.1
+            })
     }
 
-    /// Whether `point` is between the walls of another road.
-    fn between_other_walls(&self, point: Vec2) -> bool {
+    /// Whether `point`, beside point `index` of this road, is between the
+    /// walls of another road at its level.
+    fn between_other_walls(&self, point: Vec2, index: usize) -> bool {
+        let height = self.surface_point(index, 0.0).y;
         self.track
-            .on_other_road(self.number, point, |road, nearest| {
+            .on_other_road_at(self.number, point, height, |road, nearest| {
                 road.wall_at(nearest.index) - 0.3
             })
     }
@@ -320,16 +681,171 @@ fn spawn_surface(
             })
     };
     // The asphalt, except where it lies under the lap's.
-    let covered = |corners: [Vec2; 4]| corners.iter().all(|&p| road.on_other_asphalt(p));
+    let covered =
+        |index: usize, corners: [Vec2; 4]| corners.iter().all(|&p| road.on_other_asphalt(p, index));
     let indoors = scenery.soil == Soil::Floor;
     let arcade = scenery.look.voxel_size().is_some() && !indoors;
+    let plated = scenery.paving == Paving::Plates && !indoors;
     if indoors {
         spawn_toy_tracks(spawn, road, scenery, textures);
+    } else if plated {
+        let shown = |index: usize, corners| {
+            (road.number == 0 || !covered(index, corners)) && !planked(index)
+        };
+        let plates = || StandardMaterial {
+            perceptual_roughness: 0.55,
+            reflectance: 0.5,
+            ..default()
+        };
+        // Stretch after stretch of the road its own design (see
+        // [`plate_design`]). The plates under them all:
+        // Where it fills the nitro, its bars, whatever the design there.
+        let recharges = |index: usize| {
+            let along = line.lap_along_at(index);
+            let lap = road.track.lap_length();
+            road.track.recharges().iter().any(|recharge| {
+                (along - recharge.from).rem_euclid(lap)
+                    < (recharge.to - recharge.from).rem_euclid(lap)
+            })
+        };
+        let design = |index: usize| match recharges(index) {
+            true => PlateDesign::Bars,
+            false => plate_design(index as f32 * line.step_length()),
+        };
+        let is = |index: usize, corners, wanted: PlateDesign| {
+            shown(index, corners) && design(index) == wanted
+        };
+        spawn(
+            ribbon(road, -half, half, 0.0, ASPHALT_TILE, |index, corners| {
+                let band = index / PLATE_POINTS % 2;
+                shown(index, corners).then(|| match design(index) {
+                    PlateDesign::Panels => PLATES[band],
+                    PlateDesign::Hazard => PANEL,
+                    PlateDesign::Neon | PlateDesign::Bars => CARBON,
+                    PlateDesign::Pale => PALE[band],
+                    PlateDesign::Lanes => SPINE,
+                })
+            }),
+            plates(),
+        );
+        // Panels: dark panels let into the plates either side of a spine.
+        let (near, far) = (PANEL_ACROSS.0 * half, PANEL_ACROSS.1 * half);
+        for (from, to) in [(near, far), (-far, -near)] {
+            spawn(
+                ribbon(road, from, to, PAINT_LIFT, 1.0, |index, corners| {
+                    (is(index, corners, PlateDesign::Panels)
+                        && PANEL_POINTS.contains(&(index % PANEL_EVERY)))
+                    .then_some(PANEL)
+                }),
+                plates(),
+            );
+        }
+        // Panels' spine; and down the middle of the lanes, dashes of amber.
+        spawn(
+            ribbon(
+                road,
+                -SPINE_HALF,
+                SPINE_HALF,
+                PAINT_LIFT,
+                1.0,
+                |index, corners| {
+                    if !shown(index, corners) {
+                        return None;
+                    }
+                    match design(index) {
+                        PlateDesign::Panels => Some(SPINE),
+                        PlateDesign::Lanes if index % 6 < 2 => Some(AMBER),
+                        _ => None,
+                    }
+                },
+            ),
+            plates(),
+        );
+        // Lanes: a pale line either side of the middle lane. Neon: a line
+        // of light there, and one down the middle.
+        let lane = LANE_ACROSS * half;
+        for (from, to) in [(lane, lane + LINE_WIDTH), (-lane - LINE_WIDTH, -lane)] {
+            spawn(
+                ribbon(road, from, to, PAINT_LIFT, 1.0, |index, corners| {
+                    is(index, corners, PlateDesign::Lanes).then_some(PALE[0])
+                }),
+                plates(),
+            );
+        }
+        for (from, to) in [
+            (lane, lane + LINE_WIDTH),
+            (-lane - LINE_WIDTH, -lane),
+            (-LINE_WIDTH / 2.0, LINE_WIDTH / 2.0),
+        ] {
+            spawn(
+                ribbon(road, from, to, PAINT_LIFT, 1.0, |index, corners| {
+                    is(index, corners, PlateDesign::Neon).then_some(Color::WHITE)
+                }),
+                light_strip(scenery.curbs[0]),
+            );
+        }
+        // Bars: bars of light across the middle of a black road, in the
+        // circuit's second curb colour.
+        let bars = half - EDGE_LINE_INSET;
+        spawn(
+            ribbon(road, -bars, bars, PAINT_LIFT, 1.0, |index, corners| {
+                (is(index, corners, PlateDesign::Bars) && index % 4 == 0).then_some(Color::WHITE)
+            }),
+            light_strip(scenery.curbs[1]),
+        );
+        // Chevrons slanting in from each edge to the middle, pointing the
+        // way of the race: of amber on the hazard's dark road, dark on the
+        // pale one.
+        for strip in 0..CHEVRON_STRIPS {
+            let across = |k: usize| half * k as f32 / CHEVRON_STRIPS as f32;
+            let (inner, outer) = (across(strip), across(strip + 1));
+            for (from, to) in [(inner, outer), (-outer, -inner)] {
+                spawn(
+                    ribbon(road, from, to, PAINT_LIFT, 1.0, |index, corners| {
+                        if !shown(index, corners)
+                            || (index + strip) % CHEVRON_EVERY >= CHEVRON_POINTS
+                        {
+                            return None;
+                        }
+                        match design(index) {
+                            PlateDesign::Hazard => Some(AMBER),
+                            PlateDesign::Pale => Some(PANEL),
+                            _ => None,
+                        }
+                    }),
+                    plates(),
+                );
+            }
+        }
+        // A band of amber across, every so often, whatever the design.
+        spawn(
+            ribbon(
+                road,
+                -half,
+                half,
+                2.0 * PAINT_LIFT,
+                1.0,
+                |index, corners| {
+                    (shown(index, corners) && index % AMBER_EVERY == 0).then_some(AMBER)
+                },
+            ),
+            plates(),
+        );
+        // The strips of light along its edges.
+        let edge = half - EDGE_LINE_INSET;
+        for (from, to) in [(edge - EDGE_LIGHT, edge), (-edge, -edge + EDGE_LIGHT)] {
+            spawn(
+                ribbon(road, from, to, 2.0 * PAINT_LIFT, 1.0, |index, corners| {
+                    shown(index, corners).then_some(Color::WHITE)
+                }),
+                light_strip(scenery.curbs[0]),
+            );
+        }
     } else if arcade {
         // Flat, in bands of two greys.
         spawn(
             ribbon(road, -half, half, 0.0, ASPHALT_TILE, |index, corners| {
-                ((road.number == 0 || !covered(corners)) && !planked(index))
+                ((road.number == 0 || !covered(index, corners)) && !planked(index))
                     .then(|| ARCADE_ASPHALT[arcade_band(index as f32 * line.step_length())])
             }),
             StandardMaterial {
@@ -341,7 +857,8 @@ fn spawn_surface(
     } else {
         spawn(
             ribbon(road, -half, half, 0.0, ASPHALT_TILE, |index, corners| {
-                ((road.number == 0 || !covered(corners)) && !planked(index)).then_some(Color::WHITE)
+                ((road.number == 0 || !covered(index, corners)) && !planked(index))
+                    .then_some(Color::WHITE)
             }),
             StandardMaterial {
                 base_color_texture: Some(textures.asphalt.clone()),
@@ -352,6 +869,48 @@ fn spawn_surface(
         );
     }
 
+    // The speed pads let into the lap.
+    if road.number == 0 && !road.track.pads().is_empty() {
+        let (plates, chevrons) = pad_meshes(road.track);
+        spawn(
+            plates,
+            StandardMaterial {
+                base_color: PAD_PLATE,
+                perceptual_roughness: 0.4,
+                ..default()
+            },
+        );
+        spawn(chevrons, light_strip(PAD_LIGHT));
+    }
+
+    // A tube of glass round the lap where it is curled up into one, and
+    // its hoops of light.
+    if road.number == 0 {
+        let glazed = |index: usize| {
+            line.roll_at(index) > 1e-5
+                && scenery.bridges.iter().any(|bridge| {
+                    bridge.style == BridgeStyle::Tube
+                        && bridge.span.contains(index as f32 * line.step_length(), lap)
+                })
+        };
+        let (glass, hoops) = tube_meshes(road, glazed);
+        if glass.count_vertices() > 0 {
+            spawn(
+                glass,
+                StandardMaterial {
+                    base_color: TUBE_GLASS,
+                    alpha_mode: AlphaMode::Blend,
+                    perceptual_roughness: 0.08,
+                    reflectance: 0.6,
+                    double_sided: true,
+                    cull_mode: None,
+                    ..default()
+                },
+            );
+            spawn(hoops, light_strip(scenery.curbs[0]));
+        }
+    }
+
     // Pinturas: líneas blancas a los lados, discontinua en el centro y pianos
     // de dos colores solo en las curvas (and into and out of the loops).
     // Not where they would cross another road's asphalt, so where two roads
@@ -360,12 +919,13 @@ fn spawn_surface(
         perceptual_roughness: 0.7,
         ..default()
     };
-    let clear = |corners: [Vec2; 4]| {
+    let clear = |index: usize, corners: [Vec2; 4]| {
         let middle = corners.iter().sum::<Vec2>() / 4.0;
-        !road.on_other_asphalt(middle)
+        !road.on_other_asphalt(middle, index)
     };
-    let white =
-        |index, corners| (clear(corners) && !planked(index) && !indoors).then_some(Color::WHITE);
+    let white = |index, corners| {
+        (clear(index, corners) && !planked(index) && !indoors && !plated).then_some(Color::WHITE)
+    };
     let edge = half - EDGE_LINE_INSET;
     spawn(
         ribbon(road, edge - LINE_WIDTH, edge, PAINT_LIFT, 1.0, white),
@@ -380,9 +940,10 @@ fn spawn_surface(
     let wide = |index: usize| line.half_width_at(index) >= half - 0.05;
     let dashes = |index: usize, corners| {
         (index % (DASH.0 + DASH.1) < DASH.0
-            && clear(corners)
+            && clear(index, corners)
             && !planked(index)
             && !indoors
+            && !plated
             && wide(index)
             && wide(index + 1))
         .then_some(Color::WHITE)
@@ -401,7 +962,7 @@ fn spawn_surface(
             false => index % 2,
         };
         ((arcade || has_curbs(road, index))
-            && clear(corners)
+            && clear(index, corners)
             && !planked(index)
             && toy.is_none_or(|style| style == BridgeStyle::SlotTrack))
         .then_some(scenery.curbs[stripe])
@@ -504,6 +1065,13 @@ fn spawn_surface(
                 ..default()
             },
         ),
+        (
+            WallStyle::Barrier,
+            StandardMaterial {
+                perceptual_roughness: 0.5,
+                ..default()
+            },
+        ),
     ] {
         let banded = arcade && arcade_wall_color(wanted, 0, 0.0).is_some();
         let mesh = walls(road, terrain, wanted, banded, |index, side| {
@@ -519,6 +1087,19 @@ fn spawn_surface(
         };
         if let Some(mesh) = mesh {
             spawn(mesh, material);
+        }
+    }
+    // The strip of light along the top of a race track's barriers.
+    let top = line.wall() + BARRIER_LIGHT.0;
+    for (side, from, to) in [
+        (Side::Left, top, top + BARRIER_LIGHT.1),
+        (Side::Right, -top - BARRIER_LIGHT.1, -top),
+    ] {
+        let strip = ribbon(road, from, to, BARRIER_HEIGHT + 0.012, 1.0, |index, _| {
+            (style(index, side) == Some(WallStyle::Barrier)).then_some(Color::WHITE)
+        });
+        if strip.count_vertices() > 0 {
+            spawn(strip, light_strip(scenery.curbs[0]));
         }
     }
     // The see-through ones: the seafront's painted railing, a shrine's
@@ -654,6 +1235,8 @@ pub fn wall_style(scenery: &Scenery, lap: f32, along: f32, side: Side) -> Option
             }
             BridgeStyle::Wooden | BridgeStyle::OldWooden => None,
             // A toy track's own borders.
+            BridgeStyle::Skyway => Some(WallStyle::Barrier),
+            BridgeStyle::Tube => None,
             BridgeStyle::SlotTrack => Some(WallStyle::SlotBorder),
             BridgeStyle::OrangeTrack => Some(WallStyle::OrangeEdge),
             BridgeStyle::Slide => Some(WallStyle::ChuteSide),
@@ -749,6 +1332,13 @@ fn ribbon_in_strips(
             road.surface_point(i, lateral) + Vec3::Y * (SURFACE_Y + lift + road.lift())
         };
         let (v0, v1) = (index as f32 * step / tile, (index + 1) as f32 * step / tile);
+        // Round a tube, in strips narrow enough to follow its curl: one
+        // piece across would be a flat chord over the bikes' heads.
+        let strips = if line.roll_at(index) > 1e-5 || line.roll_at(index + 1) > 1e-5 {
+            strips.max(((to - from) / TUBE_STRIP).ceil() as usize)
+        } else {
+            strips
+        };
         for strip in 0..strips {
             let across = |k: usize| from + (to - from) * k as f32 / strips as f32;
             let (a, b) = (across(strip), across(strip + 1));
@@ -828,6 +1418,21 @@ fn profile(style: WallStyle) -> Profile {
                 (WALL_THICKNESS, foot),
             ],
             0.06,
+            4,
+            Vec2::splat(WALL_TILE),
+        ),
+        WallStyle::Barrier => (
+            &[
+                (0.0, foot),
+                (0.0, 0.12),
+                (0.1, BARRIER_SKIRT),
+                (0.1, BARRIER_HEIGHT - 0.08),
+                (0.18, BARRIER_HEIGHT),
+                (WALL_THICKNESS - 0.08, BARRIER_HEIGHT),
+                (WALL_THICKNESS, BARRIER_HEIGHT - 0.08),
+                (WALL_THICKNESS, foot),
+            ],
+            0.03,
             4,
             Vec2::splat(WALL_TILE),
         ),
@@ -998,6 +1603,18 @@ fn wall_tint(style: WallStyle, p: Vec3, up: f32) -> Color {
                 &Color::srgb(0.5 * shade, 0.62 * shade, 0.36 * shade),
                 0.55 * moss,
             )
+        }
+        // Dark panels, lighter at the cap, the skirt banded in amber.
+        WallStyle::Barrier => {
+            if up > BARRIER_HEIGHT - 0.1 {
+                Color::srgb(0.34, 0.36, 0.4)
+            } else if up < BARRIER_SKIRT
+                && ((p.x + p.z) / BARRIER_BAND).floor().rem_euclid(2.0) < 1.0
+            {
+                AMBER
+            } else {
+                Color::srgb(0.11, 0.12, 0.15)
+            }
         }
         WallStyle::Hedge => {
             let inside = 0.6 + 0.4 * smoothstep(0.0, 1.1, up);
@@ -1302,7 +1919,7 @@ fn at_a_junction(road: Road, index: usize, side: Side) -> bool {
     let middle = (line.offset_point(index, inner(index))
         + line.offset_point(index + 1, inner(index + 1)))
         / 2.0;
-    road.between_other_walls(middle)
+    road.between_other_walls(middle, index)
 }
 
 fn railing(road: Road, color: Color, wanted: impl Fn(usize, Side) -> bool) -> Option<Mesh> {
@@ -1321,7 +1938,7 @@ fn railing(road: Road, color: Color, wanted: impl Fn(usize, Side) -> bool) -> Op
         let over = |index: usize| {
             let index = index % line.sample_count();
             let post = line.offset_point(index, side.sign() * (line.wall_at(index) + 0.2));
-            road.between_other_walls(post)
+            road.between_other_walls(post, index)
         };
         let shows = |index: usize| {
             wanted(index, side)
@@ -1832,7 +2449,7 @@ pub mod tests {
         for &[x, _, z] in positions {
             let point = Vec2::new(x, z);
             assert!(
-                !road.between_other_walls(point),
+                !road.between_other_walls(point, road.line().nearest_index(point)),
                 "a railing at {point:?} stands on another road"
             );
         }
@@ -1852,6 +2469,8 @@ pub mod tests {
                     BridgeStyle::RedArches | BridgeStyle::Truss => {
                         assert_eq!(wall, Some(WallStyle::Concrete))
                     }
+                    BridgeStyle::Skyway => assert_eq!(wall, Some(WallStyle::Barrier)),
+                    BridgeStyle::Tube => assert_eq!(wall, None),
                     // A dam's crest: a low parapet over the lake, a barrier
                     // over the drop on the other side.
                     BridgeStyle::Dam => {
@@ -1881,9 +2500,15 @@ pub mod tests {
                     BridgeStyle::OrangeTrack => assert_eq!(wall, Some(WallStyle::OrangeEdge)),
                     BridgeStyle::Slide => assert_eq!(wall, Some(WallStyle::ChuteSide)),
                 }
-                // Off the bridge, the walls are back.
-                let off = wall_style(scenery, lap, span.to + 20.0, Side::Left);
-                assert!(off.is_some(), "{}", circuit.name);
+                // Off the bridge, the walls are back (unless another bridge
+                // follows it, with what that one has).
+                let past = span.to + 20.0;
+                let off = wall_style(scenery, lap, past, Side::Left);
+                let another = scenery
+                    .bridges
+                    .iter()
+                    .any(|next| next.span.contains(past, lap));
+                assert!(off.is_some() || another, "{}", circuit.name);
             }
         }
     }
@@ -1891,5 +2516,91 @@ pub mod tests {
     #[test]
     fn wooden_bridges_have_their_fence_instead_of_walls() {
         wooden_bridges_have_their_fence_instead_of_walls_on(&crate::testing::DEMO);
+    }
+
+    #[test]
+    fn a_road_of_plates_changes_its_design_stretch_after_stretch() {
+        // The same all along a stretch, another on the next, and every
+        // design somewhere in a lap of a few kilometres.
+        assert_eq!(plate_design(0.0), plate_design(DESIGN_LENGTH - 1.0));
+        assert_ne!(plate_design(0.0), plate_design(DESIGN_LENGTH + 1.0));
+        for k in 1..40 {
+            let (before, after) = (
+                plate_design(k as f32 * DESIGN_LENGTH - 1.0),
+                plate_design(k as f32 * DESIGN_LENGTH + 1.0),
+            );
+            assert_ne!(before, after, "at {k}");
+        }
+        for design in [
+            PlateDesign::Panels,
+            PlateDesign::Hazard,
+            PlateDesign::Neon,
+            PlateDesign::Pale,
+            PlateDesign::Lanes,
+        ] {
+            assert!((0..16).any(|k| plate_design(k as f32 * DESIGN_LENGTH) == design));
+        }
+        // The bars of light are where the nitro fills, never a design.
+        assert!((0..64).all(|k| plate_design(k as f32 * 37.0) != PlateDesign::Bars));
+    }
+
+    #[test]
+    fn a_tube_s_glass_goes_all_round_it_from_the_plates_to_the_seam() {
+        use crate::track::Tube;
+        let (rolled_across, up, round) = Track::rolled(1.0 / 7.5, 7.5 * std::f32::consts::PI);
+        // Half way round a tube 7.5 m round inside: at its top, over its
+        // middle, upside down.
+        assert!(rolled_across.abs() < 1e-3 && (up - 15.0).abs() < 1e-3);
+        assert!((round - std::f32::consts::PI).abs() < 1e-5);
+        // Where the road is not curled, as it lies.
+        assert_eq!(Track::rolled(0.0, 4.0), (4.0, 0.0, 0.0));
+        let _ = Tube {
+            from: 0.0,
+            to: 1.0,
+            radius: 7.5,
+        };
+    }
+
+    #[test]
+    fn a_speed_pad_lies_on_the_road_where_it_is_with_its_chevrons_on_it() {
+        use crate::track::{Layout, PAD_LENGTH, PAD_WIDTH, SpeedPad};
+        let demo = &crate::testing::DEMO[0].layout;
+        let pad = SpeedPad {
+            along: 100.0,
+            lateral: 3.0,
+        };
+        let layout = Layout {
+            control_points: demo.control_points,
+            elevation: demo.elevation,
+            banking: demo.banking,
+            branches: &[],
+            narrows: &[],
+            recharges: &[],
+            pads: Vec::leak(vec![pad]),
+            tubes: &[],
+            wall: demo.wall,
+        };
+        let track = Track::new(&layout);
+        let (plates, chevrons) = pad_meshes(&track);
+        for (mesh, least) in [(&plates, 4), (&chevrons, 4 * 2 * PAD_CHEVRONS)] {
+            let positions = mesh
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .and_then(|positions| positions.as_float3())
+                .expect("it has points");
+            assert!(positions.len() >= least, "{}", positions.len());
+            for &p in positions {
+                let point = Vec2::new(p[0], p[2]);
+                let nearest = track.nearest_at(point, p[1]);
+                let along = track.along(&nearest);
+                // On the pad's stretch and lane, just over the road.
+                assert!(
+                    (pad.along - 0.1..=pad.along + PAD_LENGTH + 0.1).contains(&along),
+                    "{along}"
+                );
+                assert!((nearest.lateral - pad.lateral).abs() <= PAD_WIDTH / 2.0 + 0.05);
+                let over = p[1] - (track.height_beside(&nearest) + SURFACE_Y);
+                assert!((0.0..0.1).contains(&over), "{over}");
+            }
+        }
     }
 }

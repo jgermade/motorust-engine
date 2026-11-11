@@ -26,10 +26,10 @@ use bevy::text::LineHeight;
 use bevy::ui::UiSystems;
 use swash::zeno::{Mask, Stroke, Transform as Affine};
 
-use crate::bike::{BikeState, LocalPlayer, Player};
+use crate::bike::{BikeState, BikeTuning, LocalPlayer, Player};
 use crate::geometry::smoothstep;
 use crate::menu::GameState;
-use crate::settings::Settings;
+use crate::settings::{Settings, SpeedUnits};
 use crate::vector_art::{Coverage, draw_plain_text};
 
 // The design, in its own units: its view box is 380 wide, with the dial
@@ -130,6 +130,27 @@ struct Figures(usize);
 /// gears on the gear.
 #[derive(Component)]
 struct Unit(usize);
+
+/// The bar of the nitro of `player`'s speedometer, its fill, and what the
+/// drift the bike is in would add to it.
+#[derive(Component)]
+struct NitroFrame(usize);
+#[derive(Component)]
+struct NitroGauge(usize);
+#[derive(Component)]
+struct NitroComing(usize);
+
+/// The bar of the nitro: where its middle top is on the design, over the
+/// dial, how big it is (units), and its bottle's (on its left: how far
+/// from the bar, how wide and tall its body, its neck and its valve).
+const NITRO_AT: Vec2 = Vec2::new(CENTER + 22.0, CENTER - EXTENT - 34.0);
+const NITRO_SIZE: Vec2 = Vec2::new(200.0, 24.0);
+const BOTTLE_GAP: f32 = 12.0;
+const BOTTLE: Vec2 = Vec2::new(26.0, 46.0);
+const BOTTLE_NECK: Vec2 = Vec2::new(10.0, 7.0);
+const BOTTLE_VALVE: Vec2 = Vec2::new(20.0, 6.0);
+const NITRO_COLOR: Color = crate::bike::model::hover::NITRO_LIGHT;
+const NITRO_BURNING: Color = Color::srgb(1.0, 0.82, 0.97);
 
 /// A figure of the scale lit up while the pointer of `player`'s speedometer
 /// points at it: the speed it marks (km/h).
@@ -240,15 +261,126 @@ pub fn spawn_speedometer(
             figures(SPEED_SIZE, SPEED_AT),
         ));
         dial.spawn((Unit(player), Text::new("km/h"), figures(UNIT_SIZE, UNIT_AT)));
+        // The nitro: a bar over the dial, filled as far as it is full,
+        // what a drift would add to it lighter after it, and a bottle of
+        // it on its left; shown where the bikes hover.
+        let share = |units: f32| percent(units / (2.0 * EXTENT) * 100.0);
+        let left_of_bar = NITRO_AT.x - NITRO_SIZE.x / 2.0;
+        let bottle_left = left_of_bar - BOTTLE_GAP - BOTTLE.x;
+        let bottle_top = NITRO_AT.y + NITRO_SIZE.y - BOTTLE.y;
+        dial.spawn((
+            NitroFrame(player),
+            Node {
+                position_type: PositionType::Absolute,
+                left: share(bottle_left - (CENTER - EXTENT)),
+                top: share(bottle_top - BOTTLE_NECK.y - BOTTLE_VALVE.y - (CENTER - EXTENT)),
+                width: share(NITRO_AT.x + NITRO_SIZE.x / 2.0 - bottle_left),
+                height: share(BOTTLE.y + BOTTLE_NECK.y + BOTTLE_VALVE.y),
+                ..default()
+            },
+            Visibility::Hidden,
+        ))
+        .with_children(|nitro| {
+            // Units within the frame, from its top left corner.
+            let top_of = bottle_top - BOTTLE_NECK.y - BOTTLE_VALVE.y;
+            let width = NITRO_AT.x + NITRO_SIZE.x / 2.0 - bottle_left;
+            let height = BOTTLE.y + BOTTLE_NECK.y + BOTTLE_VALVE.y;
+            let place = |x: f32, y: f32, w: f32, h: f32| Node {
+                position_type: PositionType::Absolute,
+                left: percent((x - bottle_left) / width * 100.0),
+                top: percent((y - top_of) / height * 100.0),
+                width: percent(w / width * 100.0),
+                height: percent(h / height * 100.0),
+                ..default()
+            };
+            // The bottle: its valve, its neck and its body, rounded.
+            nitro.spawn((
+                Node {
+                    border_radius: BorderRadius::all(px(2)),
+                    ..place(
+                        bottle_left + (BOTTLE.x - BOTTLE_VALVE.x) / 2.0,
+                        top_of,
+                        BOTTLE_VALVE.x,
+                        BOTTLE_VALVE.y,
+                    )
+                },
+                BackgroundColor(NITRO_COLOR),
+            ));
+            nitro.spawn((
+                place(
+                    bottle_left + (BOTTLE.x - BOTTLE_NECK.x) / 2.0,
+                    top_of + BOTTLE_VALVE.y,
+                    BOTTLE_NECK.x,
+                    BOTTLE_NECK.y,
+                ),
+                BackgroundColor(NITRO_COLOR),
+            ));
+            nitro
+                .spawn((
+                    Node {
+                        border_radius: BorderRadius::all(percent(40)),
+                        ..place(bottle_left, bottle_top, BOTTLE.x, BOTTLE.y)
+                    },
+                    BackgroundColor(NITRO_COLOR),
+                ))
+                .with_child((
+                    // A band round it, as on a bottle of gas.
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: percent(0),
+                        width: percent(100),
+                        top: percent(30),
+                        height: percent(14),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.0, 0.08, 0.8)),
+                ));
+            // The bar.
+            nitro
+                .spawn((
+                    Node {
+                        border: UiRect::all(px(1)),
+                        border_radius: BorderRadius::all(px(3)),
+                        ..place(left_of_bar, NITRO_AT.y, NITRO_SIZE.x, NITRO_SIZE.y)
+                    },
+                    BorderColor::all(NITRO_COLOR.with_alpha(0.8)),
+                    BackgroundColor(Color::srgba(0.05, 0.0, 0.08, 0.7)),
+                ))
+                .with_children(|bar| {
+                    bar.spawn((
+                        NitroGauge(player),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: percent(0),
+                            width: percent(0),
+                            height: percent(100),
+                            ..default()
+                        },
+                        BackgroundColor(NITRO_COLOR),
+                    ));
+                    bar.spawn((
+                        NitroComing(player),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: percent(0),
+                            width: percent(0),
+                            height: percent(100),
+                            ..default()
+                        },
+                        BackgroundColor(NITRO_COLOR.with_alpha(0.35)),
+                    ));
+                });
+        });
     });
 }
 
 /// The words under the speed with the gears on: the gear `gear` is in (0
 /// the first) and the unit.
-fn unit_label(gear: usize, lang: crate::locale::Language) -> String {
+fn unit_label(gear: usize, lang: crate::locale::Language, units: SpeedUnits) -> String {
+    let units = units.label();
     match lang {
-        crate::locale::Language::Spanish => format!("{}ª · km/h", gear + 1),
-        crate::locale::Language::English => format!("G{} · km/h", gear + 1),
+        crate::locale::Language::Spanish => format!("{}ª · {units}", gear + 1),
+        crate::locale::Language::English => format!("G{} · {units}", gear + 1),
     }
 }
 
@@ -259,10 +391,16 @@ pub fn pointer_angle(kmh: f32) -> f32 {
 
 /// The pointers, the lit figures of the scale and the figures in the
 /// middle follow each player's speed.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn show_speed(
     player: Query<&BikeState, With<Player>>,
     others: Query<(&BikeState, &LocalPlayer), Without<Player>>,
     settings: Res<Settings>,
+    tuning: Res<BikeTuning>,
+    time: Res<Time>,
+    mut frames: Query<(&NitroFrame, &mut Visibility)>,
+    mut gauges: Query<(&NitroGauge, &mut Node, &mut BackgroundColor), Without<NitroComing>>,
+    mut coming: Query<(&NitroComing, &mut Node, &mut BackgroundColor), Without<NitroGauge>>,
     mut pointers: Query<(&Pointer, &mut UiTransform)>,
     mut figures: Query<(&Figures, &mut Text), Without<Unit>>,
     mut units: Query<(&Unit, &mut Text), Without<Figures>>,
@@ -278,12 +416,65 @@ fn show_speed(
                 .map(|(state, _)| state)
         }
     };
-    let kmh = |index: usize| state(index).map_or(0.0, |state| state.speed.abs() * 3.6);
+    let units_of = settings.speed_units;
+    let fast = tuning.hover;
+    // The speed in the units chosen, and where it is on the dial.
+    let speed = |index: usize| state(index).map_or(0.0, |state| units_of.of(state.speed.abs()));
+    let kmh = |index: usize| units_of.on_dial(speed(index), fast);
+    // The nitro, where the bikes hover: how much each player has, lit up
+    // while it burns and throbbing once full, and how much the drift it is
+    // in would add, brighter once it is long enough to.
+    for (frame, mut visibility) in &mut frames {
+        let shown = if fast && state(frame.0).is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *visibility != shown {
+            *visibility = shown;
+        }
+    }
+    let throb = 0.5 + 0.5 * (time.elapsed_secs() * 7.0).sin();
+    for (gauge, mut node, mut color) in &mut gauges {
+        let Some(state) = state(gauge.0) else {
+            continue;
+        };
+        let width = percent(100.0 * state.nitro);
+        if node.width != width {
+            node.width = width;
+        }
+        let shade = if state.burning {
+            NITRO_BURNING
+        } else if state.nitro >= 0.999 {
+            NITRO_COLOR.mix(&NITRO_BURNING, 0.5 * throb)
+        } else {
+            NITRO_COLOR
+        };
+        if color.0 != shade {
+            color.0 = shade;
+        }
+    }
+    for (more, mut node, mut color) in &mut coming {
+        let Some(state) = state(more.0) else {
+            continue;
+        };
+        let (to_come, charged) = state.nitro_to_come();
+        let to_come = to_come.min(1.0 - state.nitro);
+        let (left, width) = (percent(100.0 * state.nitro), percent(100.0 * to_come));
+        if node.left != left || node.width != width {
+            node.left = left;
+            node.width = width;
+        }
+        let shade = NITRO_COLOR.with_alpha(if charged { 0.45 + 0.35 * throb } else { 0.3 });
+        if color.0 != shade {
+            color.0 = shade;
+        }
+    }
     // With the gears on, the gear under the speed.
     for (unit, mut text) in &mut units {
         let label = match state(unit.0).filter(|_| settings.gears) {
-            Some(state) => unit_label(state.gear, settings.language),
-            None => "km/h".to_string(),
+            Some(state) => unit_label(state.gear, settings.language, units_of),
+            None => units_of.label().to_string(),
         };
         if text.0 != label {
             text.0 = label;
@@ -296,7 +487,7 @@ fn show_speed(
         }
     }
     for (figures, mut text) in &mut figures {
-        let label = format!("{:.0}", kmh(figures.0));
+        let label = format!("{:.0}", speed(figures.0));
         if text.0 != label {
             text.0 = label;
         }
@@ -324,36 +515,42 @@ type DialPart = (
     Option<&'static LitFigure>,
 );
 
-/// The dials drawn so far, by size (px).
+/// The dials drawn so far, by size (px), the units they read in and
+/// whether they read to the speeds of the bikes that hover.
 #[derive(Resource, Default)]
-struct DialArt(HashMap<u32, DialImages>);
+struct DialArt(HashMap<(u32, SpeedUnits, bool), DialImages>);
 
 /// Each dial, its pointer and its lit figures get the images drawn at the
 /// size the dial takes on the screen; a new size (the window was resized)
 /// is drawn when it is first needed, and the sizes no longer shown are let
 /// go.
 fn draw_dials(
+    settings: Res<Settings>,
+    tuning: Res<BikeTuning>,
     mut art: ResMut<DialArt>,
     mut images: ResMut<Assets<Image>>,
     mut dials: Query<(&ComputedNode, &mut ImageNode, &Children), With<Speedometer>>,
     mut parts: Query<DialPart, Without<Speedometer>>,
 ) {
-    let size = |node: &ComputedNode| node.size().x.round() as u32;
-    let shown: Vec<u32> = dials
+    let (units, fast) = (settings.speed_units, tuning.hover);
+    let size = |node: &ComputedNode| (node.size().x.round() as u32, units, fast);
+    let shown: Vec<(u32, SpeedUnits, bool)> = dials
         .iter()
         .map(|(node, ..)| size(node))
-        .filter(|&size| size > 0)
+        .filter(|&(size, ..)| size > 0)
         .collect();
     if shown.iter().any(|size| !art.0.contains_key(size)) {
         art.0.retain(|size, _| shown.contains(size));
-        for &size in &shown {
-            art.0.entry(size).or_insert_with(|| DialImages {
-                dial: images.add(dial(size)),
-                pointer: images.add(pointer(size)),
-                lit: marks()
-                    .map(|kmh| images.add(lit_figure(size, kmh)))
-                    .collect(),
-            });
+        for &(size, units, fast) in &shown {
+            art.0
+                .entry((size, units, fast))
+                .or_insert_with(|| DialImages {
+                    dial: images.add(dial(size, units, fast)),
+                    pointer: images.add(pointer(size)),
+                    lit: marks()
+                        .map(|kmh| images.add(lit_figure(size, kmh, units, fast)))
+                        .collect(),
+                });
         }
     }
     let show = |image: &mut ImageNode, wanted: &Handle<Image>| {
@@ -553,7 +750,7 @@ fn over(below: [f32; 4], color: [f32; 3], alpha: f32) -> [f32; 4] {
 
 /// The dial, `size` px wide: everything but the pointer and the figures in
 /// the middle.
-fn dial_canvas(size: u32) -> Canvas {
+fn dial_canvas(size: u32, units: SpeedUnits, fast: bool) -> Canvas {
     let mut canvas = Canvas::new(size, BLACK);
     // A thin grey edge round the dial, and the rim inside it.
     canvas.stroke(&circle(OUTER), LINE, EDGE_COLOR, 1.0);
@@ -579,7 +776,12 @@ fn dial_canvas(size: u32) -> Canvas {
     for kmh in marks() {
         let color = if kmh >= REDLINE { RED } else { WHITE };
         let at = on_dial(pointer_angle(kmh as f32), MARKS);
-        canvas.letters(&kmh.to_string(), figure_size(kmh), at, color);
+        canvas.letters(
+            &units.mark(kmh, fast).to_string(),
+            figure_size(kmh),
+            at,
+            color,
+        );
     }
     // The darker disc in the middle, under the figures.
     canvas.fill(&circle(HUB), BLACK, HUB_SHADE);
@@ -587,8 +789,8 @@ fn dial_canvas(size: u32) -> Canvas {
     canvas
 }
 
-fn dial(size: u32) -> Image {
-    dial_canvas(size).image()
+fn dial(size: u32, units: SpeedUnits, fast: bool) -> Image {
+    dial_canvas(size, units, fast).image()
 }
 
 /// How big the figure for `kmh` is (units of the design): from 180 up, each
@@ -599,19 +801,19 @@ fn figure_size(kmh: u32) -> f32 {
 
 /// The figure for `kmh` lit up, on a drawing the size of the dial: blue,
 /// or from the red line up bright red, with no halo.
-fn lit_figure_canvas(size: u32, kmh: u32) -> Canvas {
+fn lit_figure_canvas(size: u32, kmh: u32, units: SpeedUnits, fast: bool) -> Canvas {
     let color = if kmh >= REDLINE { LIT_RED } else { LIT_FIGURE };
     let mut canvas = Canvas::new(size, color);
     let at = on_dial(pointer_angle(kmh as f32), MARKS);
-    let ink = canvas.letter_coverage(&kmh.to_string(), figure_size(kmh), at);
+    let ink = canvas.letter_coverage(&units.mark(kmh, fast).to_string(), figure_size(kmh), at);
     canvas.paint_coverage(&ink, color, 1.0);
     canvas
 }
 
 /// The figure for `kmh` lit up, for a dial `size` px wide: just the box
 /// round it (see [`lit_box`]).
-fn lit_figure(size: u32, kmh: u32) -> Image {
-    let canvas = lit_figure_canvas(size, kmh);
+fn lit_figure(size: u32, kmh: u32, units: SpeedUnits, fast: bool) -> Image {
+    let canvas = lit_figure_canvas(size, kmh, units, fast);
     let area = lit_box(kmh);
     let pixel = |units: Vec2| ((units - (CENTER - EXTENT)) * canvas.scale()).round();
     let (from, to) = (
@@ -648,8 +850,14 @@ mod tests {
     #[test]
     fn with_the_gears_the_dial_says_which_one() {
         use crate::locale::Language;
-        assert_eq!(unit_label(0, Language::Spanish), "1ª · km/h");
-        assert_eq!(unit_label(5, Language::English), "G6 · km/h");
+        assert_eq!(
+            unit_label(0, Language::Spanish, SpeedUnits::Kmh),
+            "1ª · km/h"
+        );
+        assert_eq!(
+            unit_label(5, Language::English, SpeedUnits::Kmh),
+            "G6 · km/h"
+        );
     }
 
     /// The colour (0..=255) of the drawing at a point of the design.
@@ -673,7 +881,7 @@ mod tests {
 
     #[test]
     fn the_dial_is_drawn_as_in_the_design() {
-        let canvas = dial_canvas(302);
+        let canvas = dial_canvas(302, SpeedUnits::Kmh, false);
         let center = Vec2::splat(CENTER);
         // Clear outside the dial.
         assert_eq!(at(&canvas, Vec2::new(45.0, 45.0))[3], 0);
@@ -702,7 +910,7 @@ mod tests {
 
     #[test]
     fn the_speeds_are_marked_round_the_dial() {
-        let canvas = dial_canvas(604);
+        let canvas = dial_canvas(604, SpeedUnits::Kmh, false);
         // The ink of a figure at a speed's place: white up to 270, red from 300.
         let ink = |kmh: f32| {
             let center = on_dial(pointer_angle(kmh), MARKS);
@@ -772,7 +980,7 @@ mod tests {
 
     #[test]
     fn a_lit_figure_is_blue_and_red_from_the_red_line() {
-        let canvas = lit_figure_canvas(302, 120);
+        let canvas = lit_figure_canvas(302, 120, SpeedUnits::Kmh, false);
         let center = on_dial(pointer_angle(120.0), MARKS);
         let bluest = (-5..=5)
             .flat_map(|dy| (-8..=8).map(move |dx| Vec2::new(dx as f32, dy as f32)))
@@ -780,7 +988,7 @@ mod tests {
             .max_by_key(|p| p[3] as u32 * p[2] as u32)
             .unwrap();
         assert!(bluest[2] > 230 && bluest[2] > bluest[0] + 40, "{bluest:?}");
-        let canvas = lit_figure_canvas(302, 300);
+        let canvas = lit_figure_canvas(302, 300, SpeedUnits::Kmh, false);
         let center = on_dial(pointer_angle(300.0), MARKS);
         let mut reddest = [0u8; 4];
         for dy in -5..=5 {
@@ -795,7 +1003,7 @@ mod tests {
         // Nothing round it.
         assert_eq!(at(&canvas, center + Vec2::new(0.0, 9.0))[3], 0);
         assert_eq!(at(&canvas, center + Vec2::new(0.0, 40.0))[3], 0);
-        let image = lit_figure(302, 300);
+        let image = lit_figure(302, 300, SpeedUnits::Kmh, false);
         assert!(image.width() < 80 && image.height() < 50);
     }
 
@@ -806,5 +1014,38 @@ mod tests {
         // Half black over white: middle grey, opaque.
         let grey = over([1.0, 1.0, 1.0, 1.0], BLACK, 0.5);
         assert_eq!(grey, [0.5, 0.5, 0.5, 1.0]);
+    }
+
+    #[test]
+    fn in_mph_the_same_dial_reads_to_240() {
+        let mph = SpeedUnits::Mph;
+        // Its marks: 0 to 240, every 20, the red line at 200.
+        let marked: Vec<u32> = marks().map(|mark| mph.mark(mark, false)).collect();
+        assert_eq!(marked, (0..=240).step_by(20).collect::<Vec<u32>>());
+        assert_eq!(mph.mark(REDLINE, false), 200);
+        // A speed points where its figure is written.
+        for (speed, mark) in [(0.0, 0), (100.0, 150), (240.0, 360)] {
+            assert_eq!(
+                pointer_angle(mph.on_dial(speed, false)),
+                pointer_angle(mark as f32)
+            );
+        }
+        // For the bikes that hover, to 600 km/h every 50 (360 mph every
+        // 30): 540 points at its mark.
+        let kmh = SpeedUnits::Kmh;
+        let fast: Vec<u32> = marks().map(|mark| kmh.mark(mark, true)).collect();
+        assert_eq!(fast, (0..=600).step_by(50).collect::<Vec<u32>>());
+        assert_eq!(
+            pointer_angle(kmh.on_dial(540.0, true)),
+            pointer_angle(324.0)
+        );
+        assert_eq!(mph.mark(360, true), 360);
+        // 100 m/s is 360 km/h and 224 mph.
+        assert!((SpeedUnits::Kmh.of(100.0) - 360.0).abs() < 1e-3);
+        assert!((mph.of(100.0) - 223.69).abs() < 0.01);
+        assert_eq!(
+            unit_label(2, crate::locale::Language::English, mph),
+            "G3 · mph"
+        );
     }
 }

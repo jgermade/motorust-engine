@@ -512,8 +512,18 @@ pub fn decide(
         brake: ((speed - target_speed - 1.0) / 3.0).clamp(0.0, 1.0),
         steer,
         steer_direct: 0.0,
-        // Los rivales no hacen caballitos: van a por el tiempo.
+        // Los rivales no hacen caballitos: van a por el tiempo. Nor do they
+        // drift; the nitro they get (on the stretches that fill it) they
+        // burn on a straight, flat out, with plenty of road ahead.
         wheelie: 0.0,
+        nitro: if state.nitro > RIVAL_NITRO
+            && steer.abs() < RIVAL_NITRO_STEER
+            && target_speed >= tuning.max_speed * rival.skill.min(1.0) - 0.5
+        {
+            1.0
+        } else {
+            0.0
+        },
         pivot_slowing: 0.0,
         lean: None,
         // Its steering does not reckon with the front's extra grip braking.
@@ -521,6 +531,11 @@ pub fn decide(
         look: super::curves::LeanLook::Real,
     }
 }
+
+/// How much nitro a rival waits to have before it burns it, and how little
+/// it may be steering then (a straight).
+const RIVAL_NITRO: f32 = 0.3;
+const RIVAL_NITRO_STEER: f32 = 0.1;
 
 /// How a rival riding round a loop as `ride` says at `speed` steers to get
 /// to its `line` (m to the left of the middle of the running surface, as on
@@ -548,7 +563,7 @@ pub mod tests {
     ) {
         for circuit in circuits.iter() {
             let track = Track::new(&circuit.layout);
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let rival = Rival {
                 skill: 0.95,
                 lane: 2.0,
@@ -593,7 +608,7 @@ pub mod tests {
         let track = Track::new(&circuit.layout);
         let lap = track.lap_length();
         let points = crate::race::checkpoints(&circuit.checkpoints(), lap);
-        let tuning = BikeTuning::default();
+        let tuning = BikeTuning::on(circuit);
         let rival = Rival {
             skill,
             lane: 0.0,
@@ -686,7 +701,7 @@ pub mod tests {
             if track.loops().is_empty() {
                 continue;
             }
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let rival = Rival {
                 skill: 0.9,
                 lane: -1.0,
@@ -743,7 +758,7 @@ pub mod tests {
     ) {
         for circuit in circuits.iter() {
             let track = Track::new(&circuit.layout);
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let dt = 1.0 / 120.0;
             let name = circuit.name;
             for fork in track.forks() {
@@ -807,7 +822,7 @@ pub mod tests {
             let track = Track::new(&circuit.layout);
             let forks = track.forks();
             let step = track.step_length();
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let dt = 1.0 / 120.0;
             for left in forks.iter().filter(|fork| fork.side > 0.0) {
                 let Some(right) = forks
@@ -877,7 +892,7 @@ pub mod tests {
                 continue;
             };
             let step = track.step_length();
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let dt = 1.0 / 120.0;
             let from = looped.fork as f32 * step - 60.0;
             let to = looped.join as f32 * step + 50.0;
@@ -937,7 +952,7 @@ pub mod tests {
             let Some(&looped) = track.loops().first() else {
                 continue;
             };
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let rival = Rival {
                 skill: 1.0,
                 lane: 0.0,
@@ -1002,7 +1017,7 @@ pub mod tests {
             let Some(&looped) = track.loops().first() else {
                 continue;
             };
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let rival = Rival {
                 skill: 1.0,
                 lane: -2.0,
@@ -1144,11 +1159,12 @@ pub mod tests {
     /// every step.
     fn ride_pack(
         track: &Track,
+        tuning: &BikeTuning,
         pack: &mut [Racer],
         seconds: f32,
         mut after: impl FnMut(&[Racer]),
     ) -> Ridden {
-        let tuning = BikeTuning::default();
+        let tuning = *tuning;
         let dt = 1.0 / 120.0;
         let mut ridden = Ridden::default();
         for _ in 0..(seconds / dt) as usize {
@@ -1172,11 +1188,14 @@ pub mod tests {
                     if racer.crash.is_over() {
                         let (position, heading, lateral) =
                             rejoin_pose(track, racer.state.position, racer.state.elevation, &[]);
-                        racer.state = BikeState::parked_at_level(
-                            track,
-                            (position, heading),
-                            racer.state.elevation,
-                        );
+                        racer.state = BikeState {
+                            nitro: racer.state.nitro,
+                            ..BikeState::parked_at_level(
+                                track,
+                                (position, heading),
+                                racer.state.elevation,
+                            )
+                        };
                         racer.knock = Knock::default();
                         racer.crash = CrashState::default();
                         racer.line.0 = lateral;
@@ -1264,6 +1283,7 @@ pub mod tests {
             pack_race(
                 &Track::new(&circuit.layout),
                 circuit.name,
+                &BikeTuning::on(circuit),
                 Difficulty::Medium,
                 0,
             );
@@ -1285,6 +1305,7 @@ pub mod tests {
             pack_race(
                 &Track::new(&circuit.layout),
                 circuit.name,
+                &BikeTuning::on(circuit),
                 Difficulty::VeryHard,
                 2,
             );
@@ -1328,7 +1349,13 @@ pub mod tests {
     /// race a lap of `track` from the grid: they all get round, no more
     /// than `most_falls` falls, and nobody leaves the road. Those that take
     /// the branches go round the loops.
-    fn pack_race(track: &Track, name: &str, difficulty: Difficulty, most_falls: usize) {
+    fn pack_race(
+        track: &Track,
+        name: &str,
+        tuning: &BikeTuning,
+        difficulty: Difficulty,
+        most_falls: usize,
+    ) {
         let mut pack: Vec<Racer> = crate::bike::GRID
             .iter()
             .enumerate()
@@ -1346,7 +1373,7 @@ pub mod tests {
             .collect();
         let mut progress = vec![0; pack.len()];
         // Long enough for a lap of the longest track.
-        let ridden = ride_pack(track, &mut pack, 100.0, |pack| {
+        let ridden = ride_pack(track, tuning, &mut pack, 100.0, |pack| {
             for (i, racer) in pack.iter().enumerate() {
                 assert!(
                     racer.state.ride.is_some()
@@ -1399,7 +1426,7 @@ pub mod tests {
                         Racer::on_grid(&track, slot, rival)
                     })
                     .collect();
-                let ridden = ride_pack(&track, &mut pack, 10.0, |_| {});
+                let ridden = ride_pack(&track, &BikeTuning::on(circuit), &mut pack, 10.0, |_| {});
                 assert_eq!(
                     ridden.touches, 0,
                     "{}, {difficulty:?}: {} touches",
@@ -1434,7 +1461,7 @@ pub mod tests {
     pub fn jumps_on_the_track_are_short_on(circuits: &'static crate::circuits::Circuits) {
         for circuit in circuits.iter() {
             let track = Track::new(&circuit.layout);
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let rival = Rival {
                 skill: 1.0,
                 lane: 0.0,
@@ -1488,7 +1515,7 @@ pub mod tests {
             .find(|circuit| circuit.name == name)
             .unwrap_or_else(|| panic!("{name} is a circuit"));
         let track = Track::new(&circuit.layout);
-        let top = BikeTuning::default().max_speed;
+        let top = BikeTuning::on(circuit).max_speed;
         for along in (100..480).step_by(2) {
             let index = track.index_at(along as f32);
             let crest = track.crest(&crate::track::Nearest {
@@ -1517,7 +1544,7 @@ pub mod tests {
         // off it).
         for circuit in circuits.iter() {
             let track = Track::new(&circuit.layout);
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             for (skill, lane) in [(0.9, 4.0), (0.95, 2.0), (1.0, -3.0)] {
                 let rival = Rival {
                     skill,

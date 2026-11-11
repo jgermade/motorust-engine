@@ -382,6 +382,7 @@ fn run_engines(
 #[allow(clippy::type_complexity)]
 fn place_sounds(
     time: Res<Time>,
+    tuning: Option<Res<crate::bike::BikeTuning>>,
     controls: Res<SoundControls>,
     cameras: Query<(Entity, &GlobalTransform), (With<Camera3d>, Without<PortalView>)>,
     mut listener_motion: Local<bevy::platform::collections::HashMap<Entity, (Vec3, Vec3)>>,
@@ -445,7 +446,13 @@ fn place_sounds(
         };
         params.rpm.set(engine.rpm * doppler);
         params.load.set(engine.load);
-        params.wheelie.set(state.chassis.wheelie_lift());
+        // Bikes that hover whine as turbines; those on wheels have engines.
+        let hover = tuning.as_deref().is_some_and(|tuning| tuning.hover);
+        params.hover.set(if hover { 1.0 } else { 0.0 });
+        // A hover bike's drift roars as a wheelie does.
+        params
+            .wheelie
+            .set(state.chassis.wheelie_lift().max(state.sliding()));
 
         // Al reiniciar la carrera las motos saltan a la parrilla: eso no es
         // un golpe.
