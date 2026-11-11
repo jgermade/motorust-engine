@@ -1631,6 +1631,8 @@ fn level_name(level: Level, lang: Language) -> String {
     match (level, lang) {
         (Level::High, Language::Spanish) => "Altas",
         (Level::High, Language::English) => "High",
+        (Level::Soft, Language::Spanish) => "Difusas y lejanas",
+        (Level::Soft, Language::English) => "Soft, far",
         (Level::Medium, Language::Spanish) => "Medias",
         (Level::Medium, Language::English) => "Medium",
         (Level::Low, Language::Spanish) => "Bajas",

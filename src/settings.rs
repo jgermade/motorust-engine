@@ -548,14 +548,17 @@ pub enum ShadowQuality {
     #[default]
     Auto,
     High,
+    /// As far as high, as soft as low (see [`crate::world::detail::Level::Soft`]).
+    Soft,
     Medium,
     Low,
 }
 
 /// The shadows' qualities that can be chosen, in order.
-pub const SHADOW_QUALITIES: [ShadowQuality; 4] = [
+pub const SHADOW_QUALITIES: [ShadowQuality; 5] = [
     ShadowQuality::Auto,
     ShadowQuality::High,
+    ShadowQuality::Soft,
     ShadowQuality::Medium,
     ShadowQuality::Low,
 ];

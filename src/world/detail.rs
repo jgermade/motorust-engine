@@ -50,6 +50,10 @@ pub enum Level {
     /// Four cascades out to 250 m, 2048 texels each: as they always were.
     #[default]
     High,
+    /// Four cascades out to 250 m as high, but 1024 texels each, as low:
+    /// the shadows soft, blurred at their edges, all the way out (and
+    /// lighter to draw than high).
+    Soft,
     /// Three out to 150 m.
     Medium,
     /// Two out to 90 m, 1024 texels each.
@@ -62,6 +66,7 @@ impl Level {
         match quality {
             ShadowQuality::Auto => None,
             ShadowQuality::High => Some(Level::High),
+            ShadowQuality::Soft => Some(Level::Soft),
             ShadowQuality::Medium => Some(Level::Medium),
             ShadowQuality::Low => Some(Level::Low),
         }
@@ -274,7 +279,7 @@ impl Detail {
     /// The sun's shadow cascades (see [`Level`]).
     pub fn cascades(self) -> CascadeShadowConfig {
         let (num_cascades, first_cascade_far_bound, maximum_distance) = match self.shadows() {
-            Level::High => (4, 25.0, 250.0),
+            Level::High | Level::Soft => (4, 25.0, 250.0),
             Level::Medium => (3, 20.0, 150.0),
             Level::Low => (2, 20.0, 90.0),
         };
@@ -290,7 +295,7 @@ impl Detail {
     /// How many texels wide each shadow cascade is.
     pub fn shadow_map(self) -> usize {
         match self.shadows() {
-            Level::Low => 1024,
+            Level::Low | Level::Soft => 1024,
             _ => 2048,
         }
     }
@@ -855,6 +860,11 @@ mod tests {
         assert_eq!(high.cascades().bounds.last(), Some(&250.0));
         assert_eq!(high.shadow_map(), 2048);
         assert_eq!(high.reach(), 1.0);
+        // Soft: as far as high, as soft as low.
+        let soft = at(Level::Soft, false);
+        assert_eq!(soft.cascades().bounds, high.cascades().bounds);
+        assert_eq!(soft.shadow_map(), at(Level::Low, false).shadow_map());
+        assert_eq!(Level::of(ShadowQuality::Soft), Some(Level::Soft));
         // Split, lighter whatever the level.
         let split = at(Level::High, true);
         assert!(split.reach() < high.reach());
