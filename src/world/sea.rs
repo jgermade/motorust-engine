@@ -25,6 +25,7 @@ use bevy::shader::ShaderRef;
 use super::mirror::{MirrorMaterial, Reach};
 use super::scenery::Water;
 use super::terrain::{SEA_LEVEL, Terrain};
+use crate::geometry::smoothstep;
 use crate::settings::Settings;
 use crate::track::Track;
 
@@ -477,21 +478,28 @@ fn chamfer(land: &[bool], width: usize, height: usize, wanted: bool) -> Vec<f32>
 /// The sea: a flat square out past the fog, the same for every circuit.
 /// The lines of a neon grid on the sea under a sunset of the 80s (see
 /// [`grid_mesh`]): how far apart (m), how wide (m), how far round the
-/// circuit they reach (m), and how bright they glow.
+/// circuit they reach (m), from how far off the road they start fading and
+/// where they are gone (m), and their colour: a bright cyan, drawn over the
+/// water as it is, out of the fog (which would turn them as pink as the
+/// sunset), so that it stands out on the sea's pinks and oranges.
 const GRID_SPACING: f32 = 36.0;
-const GRID_WIDTH: f32 = 0.5;
-const GRID_REACH: f32 = 1800.0;
-pub const GRID_GLOW: Color = Color::srgb(0.75, 0.22, 0.85);
+const GRID_WIDTH: f32 = 0.9;
+const GRID_REACH: f32 = 900.0;
+const GRID_FADE: (f32, f32) = (250.0, 850.0);
+pub const GRID_GLOW: Color = Color::srgb(0.15, 0.95, 1.0);
 
-/// A light neon grid on the sea, as the 80s drew the ground under their
-/// sunsets: thin lines [`GRID_SPACING`] apart either way, flat on the water
-/// (its height is the sea's, given by the entity), over the circuit and
-/// [`GRID_REACH`] round it, `points` its road. Where the land stands over
-/// the sea, it hides them; far off, the fog does. A long quad per line, so
-/// it costs next to nothing.
-pub fn grid_mesh(points: &[Vec2]) -> Mesh {
+/// A neon grid on the sea, as the 80s drew the ground under their sunsets:
+/// lines [`GRID_SPACING`] apart either way, flat on the water (its height is
+/// the sea's, given by the entity), round the circuit as far as
+/// [`GRID_REACH`], but not within the lap (`lap`, its road's centre line):
+/// the water the road goes round (a bay, a lake) is left plain, the grid on
+/// the open sea outside it. Each stretch of a line between two others is a
+/// quad, as see-through as it is far from the road ([`GRID_FADE`]): crisp
+/// by the road, gone far out, as the fog it is kept out of would have it.
+/// Where the land stands over the sea, it hides the lines.
+pub fn grid_mesh(lap: &[Vec2]) -> Mesh {
     let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
-    for &p in points {
+    for &p in lap {
         min = min.min(p);
         max = max.max(p);
     }
@@ -500,38 +508,103 @@ pub fn grid_mesh(points: &[Vec2]) -> Mesh {
         snap(min - GRID_REACH, f32::floor),
         snap(max + GRID_REACH, f32::ceil),
     );
+    // How far a point is from the road, near enough (a point of its centre
+    // line every few metres).
+    let road: Vec<Vec2> = lap.iter().step_by(4).copied().collect();
+    let off_road = |p: Vec2| {
+        road.iter()
+            .map(|q| q.distance_squared(p))
+            .fold(f32::MAX, f32::min)
+            .sqrt()
+    };
     let mut builder = super::quads::MeshBuilder::default();
     let half = GRID_WIDTH / 2.0;
     let lift = 0.15;
+    // Each line (across x at `at`, or along it), from `from` to `to` along
+    // it, in its stretches outside the lap, a quad from one crossing line to
+    // the next.
+    let mut line = |across: bool, at: f32, from: f32, to: f32| {
+        let point = |along: f32, side: f32| match across {
+            true => Vec3::new(at + side, lift, along),
+            false => Vec3::new(along, lift, at + side),
+        };
+        for (a, b) in outside(lap, across, at, from, to) {
+            let mut start = a;
+            while start < b {
+                let end = (((start + 1e-3) / GRID_SPACING).floor() + 1.0) * GRID_SPACING;
+                let end = end.min(b);
+                let middle = point((start + end) / 2.0, 0.0);
+                let fade = 1.0
+                    - smoothstep(
+                        GRID_FADE.0,
+                        GRID_FADE.1,
+                        off_road(Vec2::new(middle.x, middle.z)),
+                    );
+                if fade > 0.01 {
+                    builder.quad(
+                        [
+                            (point(start, -half), Vec2::ZERO),
+                            (point(end, -half), Vec2::Y),
+                            (point(end, half), Vec2::ONE),
+                            (point(start, half), Vec2::X),
+                        ],
+                        Vec3::Y,
+                        Color::srgba(1.0, 1.0, 1.0, fade),
+                    );
+                }
+                start = end;
+            }
+        }
+    };
     let mut x = min.x;
     while x <= max.x {
-        builder.quad(
-            [
-                (Vec3::new(x - half, lift, min.y), Vec2::ZERO),
-                (Vec3::new(x - half, lift, max.y), Vec2::Y),
-                (Vec3::new(x + half, lift, max.y), Vec2::ONE),
-                (Vec3::new(x + half, lift, min.y), Vec2::X),
-            ],
-            Vec3::Y,
-            Color::WHITE,
-        );
+        line(true, x, min.y, max.y);
         x += GRID_SPACING;
     }
     let mut z = min.y;
     while z <= max.y {
-        builder.quad(
-            [
-                (Vec3::new(min.x, lift, z - half), Vec2::ZERO),
-                (Vec3::new(min.x, lift, z + half), Vec2::Y),
-                (Vec3::new(max.x, lift, z + half), Vec2::ONE),
-                (Vec3::new(max.x, lift, z - half), Vec2::X),
-            ],
-            Vec3::Y,
-            Color::WHITE,
-        );
+        line(false, z, min.x, max.x);
         z += GRID_SPACING;
     }
     builder.build()
+}
+
+/// The stretches of a straight line outside the closed curve `lap`: the line
+/// x = `at` (if `across`, running along z) or z = `at` (running along x),
+/// from `from` to `to` along it, which start and end outside it. Where it
+/// crosses the curve it goes in or out, by turns.
+fn outside(lap: &[Vec2], across: bool, at: f32, from: f32, to: f32) -> Vec<(f32, f32)> {
+    // A point's place along the line and across it.
+    let split = |p: Vec2| -> (f32, f32) {
+        match across {
+            true => (p.y, p.x),
+            false => (p.x, p.y),
+        }
+    };
+    let mut crossings: Vec<f32> = Vec::new();
+    for (k, &p) in lap.iter().enumerate() {
+        let q = lap[(k + 1) % lap.len()];
+        let ((pa, ps), (qa, qs)) = (split(p), split(q));
+        if (ps - at) * (qs - at) < 0.0 || (ps == at && qs != at) {
+            let t = (at - ps) / (qs - ps);
+            crossings.push(pa + (qa - pa) * t);
+        }
+    }
+    crossings.sort_by(f32::total_cmp);
+    let mut stretches = Vec::new();
+    let mut start = from;
+    let mut inside = false;
+    for crossing in crossings.into_iter().filter(|c| *c > from && *c < to) {
+        if !inside {
+            stretches.push((start, crossing));
+        }
+        start = crossing;
+        inside = !inside;
+    }
+    if !inside {
+        stretches.push((start, to));
+    }
+    stretches
 }
 
 pub fn sea_mesh() -> Mesh {
@@ -572,6 +645,38 @@ pub fn sea_mesh() -> Mesh {
 #[cfg(any(test, feature = "testing"))]
 pub mod tests {
     use super::*;
+    use bevy::mesh::VertexAttributeValues;
+
+    #[test]
+    fn the_neon_grid_lies_outside_the_lap_not_on_the_water_it_goes_round() {
+        // A square lap 200 m across round the origin.
+        let lap = [
+            Vec2::new(-100.0, -100.0),
+            Vec2::new(100.0, -100.0),
+            Vec2::new(100.0, 100.0),
+            Vec2::new(-100.0, 100.0),
+        ];
+        // A line through it is cut where it goes in and comes out.
+        let stretches = outside(&lap, true, 10.0, -500.0, 500.0);
+        assert_eq!(stretches, [(-500.0, -100.0), (100.0, 500.0)]);
+        // One clear of it, whole.
+        assert_eq!(
+            outside(&lap, false, 300.0, -500.0, 500.0),
+            [(-500.0, 500.0)]
+        );
+        // No line's stretch has its middle within the lap.
+        let mesh = grid_mesh(&lap);
+        let Some(VertexAttributeValues::Float32x3(points)) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("no positions");
+        };
+        assert!(!points.is_empty());
+        for quad in points.chunks(4) {
+            let middle = quad.iter().map(|p| Vec2::new(p[0], p[2])).sum::<Vec2>() / 4.0;
+            assert!(middle.abs().max_element() > 99.0, "{middle}");
+        }
+    }
 
     #[test]
     fn the_shore_runs_between_dry_and_wet_texels() {

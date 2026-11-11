@@ -1204,8 +1204,9 @@ fn build(
                 builder.meshes.add(sea::grid_mesh(basis.track.centerline())),
                 builder.materials.add(StandardMaterial {
                     base_color: sea::GRID_GLOW,
-                    alpha_mode: AlphaMode::Add,
+                    alpha_mode: AlphaMode::Blend,
                     unlit: true,
+                    fog_enabled: false,
                     ..default()
                 }),
             )
