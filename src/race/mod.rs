@@ -1350,11 +1350,14 @@ pub mod tests {
             let lap = Track::new(&circuit.layout).lap_length();
             let points = checkpoints(&circuit.checkpoints(), lap);
             assert!(points.len() >= 2, "{}: {points:?}", circuit.name);
+            // As much further apart as its bikes are faster.
+            let quick = crate::bike::BikeTuning::on(circuit).max_speed
+                / crate::bike::BikeTuning::default().max_speed;
             for index in 0..points.len() {
                 let stretch = stretch_after(&points, index);
                 // Some 30 s apart at race pace, never much more.
                 assert!(
-                    (550.0..=1500.0).contains(&stretch),
+                    (550.0 * quick..=1500.0 * quick).contains(&stretch),
                     "{}: {stretch} m after checkpoint {index}",
                     circuit.name
                 );

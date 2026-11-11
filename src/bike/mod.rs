@@ -677,7 +677,9 @@ impl BikeTuning {
             hover: true,
             max_speed: HOVER_TOP_SPEED,
             engine_accel: 40.0,
-            max_lateral_accel: 65.0 * (HOVER_TOP_SPEED / 80.0).powi(2) * 0.8,
+            // Flat out round a bend 170 m round, no tighter: a tighter one
+            // asks to lift, or to drift.
+            max_lateral_accel: HOVER_GRIP,
             ..default()
         }
     }
@@ -722,6 +724,10 @@ const ROUND_THE_TUBE: f32 = 6.0;
 /// How fast a bike that hovers goes flat out (m/s, 540 km/h), and with a
 /// boost or the nitro some 600 km/h (see [`BOOST_TOP_SPEED`]).
 pub const HOVER_TOP_SPEED: f32 = 150.0;
+
+/// How hard a bike that hovers grips across (m/s²): at its top speed, round
+/// a bend 170 m round, no tighter.
+const HOVER_GRIP: f32 = HOVER_TOP_SPEED * HOVER_TOP_SPEED / 170.0;
 
 /// The bikes change gears as Options > Game says.
 fn follow_gears(settings: Res<Settings>, mut tuning: ResMut<BikeTuning>) {
@@ -4370,7 +4376,11 @@ pub mod tests {
         circuits: &'static crate::circuits::Circuits,
     ) {
         for circuit in circuits.iter() {
-            flat_out_lap(&Track::new(&circuit.layout), circuit.name);
+            flat_out_lap(
+                &Track::new(&circuit.layout),
+                circuit.name,
+                &BikeTuning::on(circuit),
+            );
         }
     }
 
@@ -4379,8 +4389,8 @@ pub mod tests {
         flat_out_steering_only_laps_without_touching_the_walls_on(&crate::testing::DEMO);
     }
 
-    fn flat_out_lap(track: &Track, name: &str) {
-        let tuning = BikeTuning::default();
+    fn flat_out_lap(track: &Track, name: &str, tuning: &BikeTuning) {
+        let tuning = *tuning;
         let mut state = BikeState::parked_on(track, track.grid_pose(0, 0.0));
         let n = track.sample_count();
         let here = |state: &BikeState| track.nearest_index_at(state.position, state.elevation);
@@ -4389,12 +4399,26 @@ pub mod tests {
         // Long enough for a lap of the longest track.
         let steps = (100.0 / DT) as usize;
         for _ in 0..steps {
-            // Mira 18 m por delante de la línea central y gira hacia allí.
-            let ahead = track.offset_point(here(&state) + 9, 0.0);
+            // Mira 18 m por delante de la línea central y gira hacia allí:
+            // or as far as it goes in three tenths of a second, if further.
+            let reach = 9.max((state.speed * 0.3 / track.step_length()) as usize);
+            let ahead = track.offset_point(here(&state) + reach, 0.0);
             let angle = wrap_angle(heading_of(ahead - state.position) - state.heading);
+            // As hard as ever at a superbike's speeds, softer the faster
+            // past them: at a hover bike's, as hard it would swing from
+            // wall to wall.
+            let gain = 3.0 * (80.0 / state.speed.max(80.0)).sqrt();
+            let steer = (angle * gain).clamp(-1.0, 1.0);
+            // A bike that hovers drifts round a bend it turns hard into, as
+            // its rider would.
+            let drift = tuning.hover && steer.abs() > 0.6;
+            // And, at full lock, it lifts: a bend tighter than it takes flat
+            // out is there to be drifted round, not ridden flat out.
+            let lift = tuning.hover && steer.abs() > 0.9;
             let input = BikeInput {
-                throttle: 1.0,
-                steer: (angle * 3.0).clamp(-1.0, 1.0),
+                throttle: if lift { 0.0 } else { 1.0 },
+                steer,
+                wheelie: if drift { 1.0 } else { 0.0 },
                 ..default()
             };
             state = advance(&state, &input, track, &tuning, DT);
@@ -4407,7 +4431,9 @@ pub mod tests {
                 here(&state),
                 state.speed * 3.6
             );
-            if distance > track.half_width() {
+            // Off the road, on rough ground (not the paved shoulders of a
+            // bridge or a tunnel, nor all round a tube).
+            if track.surface_beside(&nearest).is_rough() {
                 on_grass += 1;
             }
             let index = here(&state) as i64;

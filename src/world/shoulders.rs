@@ -51,9 +51,16 @@ fn road_shoulders(
             // tunnels are its excavation, which the branches through it share.
             let tunnel = scenery.tunnels.iter().any(in_span);
             let excavation = tunnel && scenery.excavation().is_some();
-            let paved = road == 0
-                && ((tunnel && !excavation)
-                    || scenery.bridges.iter().any(|bridge| in_span(&bridge.span)));
+            // A way off a skyway, where it is apart from it, is one too.
+            let skyway = road > 0
+                && line.apart_at(index) >= 1.0
+                && scenery.bridges.iter().any(|bridge| {
+                    bridge.style == super::scenery::BridgeStyle::Skyway && in_span(&bridge.span)
+                });
+            let paved = skyway
+                || road == 0
+                    && ((tunnel && !excavation)
+                        || scenery.bridges.iter().any(|bridge| in_span(&bridge.span)));
             [1.0, -1.0].map(|side| {
                 if paved {
                     return Surface::Paved;

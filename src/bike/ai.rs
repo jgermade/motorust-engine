@@ -1157,11 +1157,12 @@ pub mod tests {
     /// every step.
     fn ride_pack(
         track: &Track,
+        tuning: &BikeTuning,
         pack: &mut [Racer],
         seconds: f32,
         mut after: impl FnMut(&[Racer]),
     ) -> Ridden {
-        let tuning = BikeTuning::default();
+        let tuning = *tuning;
         let dt = 1.0 / 120.0;
         let mut ridden = Ridden::default();
         for _ in 0..(seconds / dt) as usize {
@@ -1275,6 +1276,7 @@ pub mod tests {
             pack_race(
                 &Track::new(&circuit.layout),
                 circuit.name,
+                &BikeTuning::on(circuit),
                 Difficulty::Medium,
                 0,
             );
@@ -1296,6 +1298,7 @@ pub mod tests {
             pack_race(
                 &Track::new(&circuit.layout),
                 circuit.name,
+                &BikeTuning::on(circuit),
                 Difficulty::VeryHard,
                 2,
             );
@@ -1339,7 +1342,13 @@ pub mod tests {
     /// race a lap of `track` from the grid: they all get round, no more
     /// than `most_falls` falls, and nobody leaves the road. Those that take
     /// the branches go round the loops.
-    fn pack_race(track: &Track, name: &str, difficulty: Difficulty, most_falls: usize) {
+    fn pack_race(
+        track: &Track,
+        name: &str,
+        tuning: &BikeTuning,
+        difficulty: Difficulty,
+        most_falls: usize,
+    ) {
         let mut pack: Vec<Racer> = crate::bike::GRID
             .iter()
             .enumerate()
@@ -1357,7 +1366,7 @@ pub mod tests {
             .collect();
         let mut progress = vec![0; pack.len()];
         // Long enough for a lap of the longest track.
-        let ridden = ride_pack(track, &mut pack, 100.0, |pack| {
+        let ridden = ride_pack(track, tuning, &mut pack, 100.0, |pack| {
             for (i, racer) in pack.iter().enumerate() {
                 assert!(
                     racer.state.ride.is_some()
@@ -1410,7 +1419,7 @@ pub mod tests {
                         Racer::on_grid(&track, slot, rival)
                     })
                     .collect();
-                let ridden = ride_pack(&track, &mut pack, 10.0, |_| {});
+                let ridden = ride_pack(&track, &BikeTuning::on(circuit), &mut pack, 10.0, |_| {});
                 assert_eq!(
                     ridden.touches, 0,
                     "{}, {difficulty:?}: {} touches",
