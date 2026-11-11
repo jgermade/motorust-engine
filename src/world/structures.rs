@@ -342,7 +342,7 @@ pub fn structure_pieces(
         }
         let (deck, steel) = match bridge.style {
             BridgeStyle::Truss => truss_bridge_meshes(track, terrain, &indices),
-            BridgeStyle::Skyway => skyway_meshes(track, terrain, &indices),
+            BridgeStyle::Skyway => skyway_meshes(track, track, terrain, &indices),
             _ => bridge_meshes(track, terrain, &indices),
         };
         pieces.push((
@@ -405,7 +405,7 @@ pub fn structure_pieces(
                     ..default()
                 },
             ));
-            let (deck, _) = skyway_meshes(road, terrain, &run);
+            let (deck, _) = skyway_meshes(track, road, terrain, &run);
             pieces.push((
                 deck,
                 StandardMaterial {
@@ -1070,13 +1070,30 @@ const SKYWAY_LUMENS: f32 = 1_400_000.0;
 
 /// A skyway: its deck on pairs of pylons every so often, and nothing more
 /// (the second mesh is empty).
-fn skyway_meshes(track: &Track, terrain: &Terrain, indices: &[usize]) -> (Mesh, Mesh) {
+fn skyway_meshes(
+    whole: &Track,
+    track: &Track,
+    terrain: &Terrain,
+    indices: &[usize],
+) -> (Mesh, Mesh) {
     let last = indices.len() - 1;
     let piers: Vec<usize> = (0..=last)
         .step_by(SKYWAY_PIER_EVERY)
         .chain(std::iter::once(last))
         .collect();
-    let mut deck = concrete_deck(track, terrain, indices, &piers);
+    // No pillar down onto a road passing under the deck (the lap, or a way
+    // off it, or the lap under a way off it): the deck spans it.
+    let pillars: Vec<usize> = piers
+        .iter()
+        .copied()
+        .filter(|&k| {
+            [-1.0, 0.0, 1.0].iter().all(|side| {
+                let top = track.surface_point(indices[k], side * WALL_DISTANCE);
+                !whole.road_under(Vec2::new(top.x, top.z), top.y)
+            })
+        })
+        .collect();
+    let mut deck = concrete_deck(track, terrain, indices, &pillars);
     // What it is built on, in sight from the road: at each pair of pylons
     // a mast either side, rising over the deck, a beam across between
     // their tops, and stays from the tops down to the deck's edges ahead
@@ -1759,7 +1776,7 @@ pub mod tests {
                     | BridgeStyle::Slide => continue,
                     BridgeStyle::RedArches => bridge_meshes(&track, &terrain, &indices),
                     BridgeStyle::Truss => truss_bridge_meshes(&track, &terrain, &indices),
-                    BridgeStyle::Skyway => skyway_meshes(&track, &terrain, &indices),
+                    BridgeStyle::Skyway => skyway_meshes(&track, &track, &terrain, &indices),
                     // A dam's crest is the dam's own concrete.
                     BridgeStyle::Dam => {
                         let dam = scenery

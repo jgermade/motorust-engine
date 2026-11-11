@@ -957,8 +957,13 @@ impl Track {
         let lap = self.lap_length();
         let span = (branch.to - branch.from).rem_euclid(lap);
         let counts_as = |s: f32| (branch.from + span * s / length) % lap;
-        let middle = centerline[centerline.len() / 2];
-        let side = self.project_on_lap(middle).lateral.signum();
+        // The side it parts to: where it first leaves the lap's walls (one
+        // braided with the lap crosses to the other further on).
+        let side = centerline
+            .iter()
+            .map(|&point| self.project_on_lap(point))
+            .find(|on| on.distance > self.wall)
+            .map_or(1.0, |on| on.lateral.signum());
         let mut road = self.side_road(centerline, None, branch.rise, counts_as);
         for (i, wall) in road.walls.iter_mut().enumerate() {
             let along = i as f32 * road.step;
@@ -1400,6 +1405,20 @@ impl Track {
                 let (_, level) = line.search(point, Some(height), other);
                 level.is_some_and(|nearest| nearest.distance < within(line, &nearest))
             })
+    }
+
+    /// Whether some road (the lap or a way off it) passes under `point`, a
+    /// storey and more lower than `height`, within a few metres past its
+    /// walls: where a pillar down from a deck over it would stand on it.
+    pub fn road_under(&self, point: Vec2, height: f32) -> bool {
+        (0..=self.side_roads.len()).any(|number| {
+            let road = self.road(number);
+            (0..road.segment_count()).any(|index| {
+                let here = road.project(index, point);
+                here.distance < road.wall_at(here.index) + PILLAR_CLEAR
+                    && road.height_on_road(&here) < height - LEVEL_REACH
+            })
+        })
     }
 
     /// How far the walls are from the centre line at point `index` (m).
@@ -2091,6 +2110,9 @@ fn closer(a: Option<Nearest>, b: Option<Nearest>) -> Option<Nearest> {
 /// as on it (m): a bike in the air over a crest, a rider thrown up. Where
 /// the track passes over itself, the two stretches are much further apart.
 const LEVEL_REACH: f32 = 6.0;
+
+/// How far past a road's walls a pillar down to the ground keeps off it (m).
+const PILLAR_CLEAR: f32 = 4.0;
 /// How much further than the nearest road the road at something's level
 /// may be and still be the one under it (m): where the track passes over
 /// itself, the two stretches are close. Something high in the air (falling
