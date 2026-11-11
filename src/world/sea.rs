@@ -25,7 +25,6 @@ use bevy::shader::ShaderRef;
 use super::mirror::{MirrorMaterial, Reach};
 use super::scenery::Water;
 use super::terrain::{SEA_LEVEL, Terrain};
-use crate::geometry::smoothstep;
 use crate::settings::Settings;
 use crate::track::Track;
 
@@ -476,128 +475,98 @@ fn chamfer(land: &[bool], width: usize, height: usize, wanted: bool) -> Vec<f32>
 }
 
 /// The sea: a flat square out past the fog, the same for every circuit.
-/// The lines of a neon grid on the sea under a sunset of the 80s (see
-/// [`grid_mesh`]): how far apart (m), how wide (m), how far round the
-/// circuit they reach (m), from how far off the road they start fading and
-/// where they are gone (m), and their colour: a dark indigo, drawn over the
-/// water as it is, out of the fog (which would turn them as pink as the
-/// sunset), so that it stands out on the sea's pinks and oranges and on the
-/// sun's glare on the water, which washes out any light colour.
-const GRID_SPACING: f32 = 80.0;
-const GRID_WIDTH: f32 = 1.2;
-/// How much wider a line is the further it is from the road (m a metre),
-/// so that it keeps about its width on the screen; how long each of its
-/// pieces is (m), each turned to face the road on its own; and how high
-/// over the sea the eye on the road is taken to be (m).
-const GRID_WIDENING: f32 = 0.004;
-const GRID_PIECE: f32 = 15.0;
-const GRID_EYE: f32 = 12.0;
-/// From how far off the road a line's pieces start turning to face it, and
-/// from where they face it wholly (m): nearer, seen from above, they lie
-/// flat, or they would stand up like a fence.
-const GRID_TURN: (f32, f32) = (80.0, 400.0);
-const GRID_REACH: f32 = 800.0;
-const GRID_FADE: (f32, f32) = (250.0, 750.0);
+/// The neon grid on the sea under a sunset of the 80s (see [`grid_mesh`] and
+/// `grid.wgsl`): how far apart its lines are (m), how wide they are drawn
+/// (pixels: the same at any distance, worked out for each pixel, so they
+/// neither thin out to flicker far off nor thicken close up, and face the
+/// eye wherever it is), where they fade away from the camera (m), how far
+/// round the circuit the water they are drawn on reaches (m), in strips how
+/// deep (m), and their colour: a dark indigo, which stands out on the sea's
+/// pinks and on the sun's glare on it.
+const GRID_SPACING: f32 = 60.0;
+const GRID_PIXELS: f32 = 2.0;
+const GRID_FADE: (f32, f32) = (350.0, 1100.0);
+const GRID_REACH: f32 = 1200.0;
+const GRID_STRIP: f32 = 20.0;
 pub const GRID_GLOW: Color = Color::srgb(0.17, 0.05, 0.33);
 
-/// A neon grid on the sea, as the 80s drew the ground under their sunsets:
-/// lines [`GRID_SPACING`] apart either way, flat on the water (its height is
-/// the sea's, given by the entity), round the circuit as far as
-/// [`GRID_REACH`], but not within the lap (`lap`, its road's centre line):
-/// the water the road goes round (a bay, a lake) is left plain, the grid on
-/// the open sea outside it. Each line is in pieces [`GRID_PIECE`] long, each
-/// a quad turned about the line to face the nearest of the road (a little
-/// over it, [`GRID_EYE`]) the further it is out ([`GRID_TURN`]) rather than
-/// lying flat on the water, where, seen
-/// almost edge on from the road, it would be thinner than a pixel and
-/// flicker; wider the further it is from the road ([`GRID_WIDENING`]), and
-/// as see-through as it is far ([`GRID_FADE`]): crisp by the road, gone far
-/// out, as the fog it is kept out of would have it. Where the land stands
-/// over the sea, it hides the lines.
+/// How the grid is drawn (see `grid.wgsl`).
+#[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+pub struct GridMaterial {
+    /// Its lines' colour (linear).
+    #[uniform(0)]
+    pub color: Vec4,
+    /// x: how far apart its lines are (m); y: how wide (pixels); z and w:
+    /// from how far from the camera they fade, and where they are gone (m).
+    #[uniform(1)]
+    pub lines: Vec4,
+}
+
+impl GridMaterial {
+    pub fn new() -> Self {
+        Self {
+            color: GRID_GLOW.to_linear().to_vec4(),
+            lines: Vec4::new(GRID_SPACING, GRID_PIXELS, GRID_FADE.0, GRID_FADE.1),
+        }
+    }
+}
+
+impl Default for GridMaterial {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Material for GridMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://motorust_engine/world/grid.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    fn enable_shadows() -> bool {
+        false
+    }
+}
+
+/// The water the neon grid is drawn on, as an 80s sunset drew the ground
+/// under it: flat on the sea (its height is the sea's, given by the entity),
+/// over the circuit and [`GRID_REACH`] round it, but not within the lap
+/// (`lap`, its road's centre line): the water the road goes round (a bay, a
+/// lake) is left plain, the grid on the open sea outside it. In strips
+/// [`GRID_STRIP`] deep across x, each cut where it crosses the lap. Where the
+/// land stands over the sea, it hides it.
 pub fn grid_mesh(lap: &[Vec2]) -> Mesh {
     let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
     for &p in lap {
         min = min.min(p);
         max = max.max(p);
     }
-    let snap = |v: Vec2, round: fn(f32) -> f32| (v / GRID_SPACING).map(round) * GRID_SPACING;
-    let (min, max) = (
-        snap(min - GRID_REACH, f32::floor),
-        snap(max + GRID_REACH, f32::ceil),
-    );
-    // How far a point is from the road, near enough (a point of its centre
-    // line every few metres).
-    let road: Vec<Vec2> = lap.iter().step_by(4).copied().collect();
-    let nearest = |p: Vec2| {
-        road.iter()
-            .copied()
-            .min_by(|a, b| a.distance_squared(p).total_cmp(&b.distance_squared(p)))
-            .unwrap_or(p)
-    };
+    let (min, max) = (min - GRID_REACH, max + GRID_REACH);
     let mut builder = super::quads::MeshBuilder::default();
-    let lift = 0.15;
-    // Each line (across x at `at`, or along it), from `from` to `to` along
-    // it, in its stretches outside the lap, a quad from one crossing line to
-    // the next.
-    let mut line = |across: bool, at: f32, from: f32, to: f32| {
-        let along_line = match across {
-            true => Vec3::Z,
-            false => Vec3::X,
-        };
-        let point = |along: f32| match across {
-            true => Vec3::new(at, lift, along),
-            false => Vec3::new(along, lift, at),
-        };
-        for (a, b) in outside(lap, across, at, from, to) {
-            let mut start = a;
-            while start < b {
-                let end = (start + GRID_PIECE).min(b);
-                let middle = point((start + end) / 2.0);
-                let road = nearest(Vec2::new(middle.x, middle.z));
-                let far = road.distance(Vec2::new(middle.x, middle.z));
-                let fade = 1.0 - smoothstep(GRID_FADE.0, GRID_FADE.1, far);
-                if fade > 0.01 {
-                    // Turned about the line towards the eye on the road: its
-                    // width across the line and up towards it.
-                    // Near the road, seen from above, flat on the water;
-                    // turned more the further out, where it is seen edge on.
-                    let eye = Vec3::new(road.x, GRID_EYE, road.y);
-                    let turned = smoothstep(GRID_TURN.0, GRID_TURN.1, far);
-                    let facing = Vec3::Y
-                        .lerp((eye - middle).normalize_or(Vec3::Y), turned)
-                        .normalize_or(Vec3::Y);
-                    let across_line = facing.cross(along_line).normalize_or(Vec3::Y);
-                    let facing = along_line.cross(across_line);
-                    let facing = if facing.y < 0.0 { -facing } else { facing };
-                    let half = (GRID_WIDTH + GRID_WIDENING * far) / 2.0;
-                    let side = across_line * half;
-                    // Its lower edge on the water.
-                    let up = Vec3::Y * side.y.abs();
-                    let (p, q) = (point(start) + up, point(end) + up);
-                    builder.quad(
-                        [
-                            (p - side, Vec2::ZERO),
-                            (q - side, Vec2::Y),
-                            (q + side, Vec2::ONE),
-                            (p + side, Vec2::X),
-                        ],
-                        facing,
-                        Color::srgba(1.0, 1.0, 1.0, fade),
-                    );
-                }
-                start = end;
-            }
-        }
-    };
-    let mut x = min.x;
-    while x <= max.x {
-        line(true, x, min.y, max.y);
-        x += GRID_SPACING;
-    }
+    let lift = 0.1;
     let mut z = min.y;
-    while z <= max.y {
-        line(false, z, min.x, max.x);
-        z += GRID_SPACING;
+    while z < max.y {
+        let next = (z + GRID_STRIP).min(max.y);
+        for (a, b) in outside(lap, false, (z + next) / 2.0, min.x, max.x) {
+            builder.quad(
+                [
+                    (Vec3::new(a, lift, z), Vec2::ZERO),
+                    (Vec3::new(a, lift, next), Vec2::Y),
+                    (Vec3::new(b, lift, next), Vec2::ONE),
+                    (Vec3::new(b, lift, z), Vec2::X),
+                ],
+                Vec3::Y,
+                Color::WHITE,
+            );
+        }
+        z = next;
     }
     builder.build()
 }

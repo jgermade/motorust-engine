@@ -73,16 +73,19 @@ impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "sea.wgsl");
         embedded_asset!(app, "mirror.wgsl");
+        embedded_asset!(app, "grid.wgsl");
         // Without the renderer (in the tests), the sea's and the mirroring
         // water's materials are only assets.
         if app.is_plugin_added::<PbrPlugin>() {
             app.add_plugins((
                 MaterialPlugin::<sea::SeaMaterial>::default(),
                 MaterialPlugin::<mirror::MirrorMaterial>::default(),
+                MaterialPlugin::<sea::GridMaterial>::default(),
             ));
         } else {
             app.init_asset::<sea::SeaMaterial>()
-                .init_asset::<mirror::MirrorMaterial>();
+                .init_asset::<mirror::MirrorMaterial>()
+                .init_asset::<sea::GridMaterial>();
         }
         // The modelled trees, if the content has them (a game's: the
         // engine's own has none, and plants the classic ones).
@@ -1144,6 +1147,7 @@ struct Builder<'w> {
     sea: Res<'w, Sea>,
     sea_materials: ResMut<'w, Assets<sea::SeaMaterial>>,
     mirror_materials: ResMut<'w, Assets<mirror::MirrorMaterial>>,
+    grid_materials: ResMut<'w, Assets<sea::GridMaterial>>,
     meshes: ResMut<'w, Assets<Mesh>>,
     materials: ResMut<'w, Assets<StandardMaterial>>,
     images: ResMut<'w, Assets<Image>>,
@@ -1202,13 +1206,7 @@ fn build(
         .then(|| {
             (
                 builder.meshes.add(sea::grid_mesh(basis.track.centerline())),
-                builder.materials.add(StandardMaterial {
-                    base_color: sea::GRID_GLOW,
-                    alpha_mode: AlphaMode::Blend,
-                    unlit: true,
-                    fog_enabled: false,
-                    ..default()
-                }),
+                builder.grid_materials.add(sea::GridMaterial::new()),
             )
         });
     let cartoon_sea = builder
