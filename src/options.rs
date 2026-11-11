@@ -26,8 +26,8 @@ use crate::settings::{
     Antialiasing, CHOOSE_FULLSCREEN, ControlsTest, DEFAULT_FRAME_LATENCY, DIFFICULTIES,
     FALSE_STARTS, FORCE_PERFORMANCES, FPS_LIMITS, FRAME_LATENCIES, FULLSCREEN_KINDS, FpsLimit,
     GRASS_TILINGS, LIGHTS_HOLDS, RACE_STARTS, RELIEFS, RENDER_SCALES, RESOLUTIONS, RaceStart,
-    SHADOW_QUALITIES, START_LIGHTS, ScreenRate, Settings, ShadowQuality, StartedWith, TRACK_VIEWS,
-    WEB, cycle,
+    SHADOW_QUALITIES, SPEED_UNITS, START_LIGHTS, ScreenRate, Settings, ShadowQuality, StartedWith,
+    TRACK_VIEWS, WEB, cycle,
 };
 use crate::sound::music::{Jukebox, Songs, Tune, player_tunes};
 use crate::ui::{
@@ -440,6 +440,8 @@ impl OptionsMenu {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum GameItem {
     Language,
+    /// What the speedometer counts in.
+    SpeedUnits,
     Difficulty,
     /// How the track is seen while it is chosen.
     TrackView,
@@ -559,6 +561,7 @@ enum GraphicsItem {
 fn game_items() -> Vec<GameItem> {
     vec![
         GameItem::Language,
+        GameItem::SpeedUnits,
         GameItem::Difficulty,
         GameItem::TrackView,
         GameItem::RaceStart,
@@ -1321,6 +1324,10 @@ fn use_options_menu(
                     settings.language = cycle(&LANGUAGES, settings.language, change);
                     sounds.write(MenuSound::Move);
                 }
+                GameItem::SpeedUnits if change != 0 => {
+                    settings.speed_units = cycle(&SPEED_UNITS, settings.speed_units, change);
+                    sounds.write(MenuSound::Move);
+                }
                 GameItem::Difficulty if change != 0 => {
                     settings.difficulty = cycle(&DIFFICULTIES, settings.difficulty, change);
                     sounds.write(MenuSound::Move);
@@ -1942,6 +1949,13 @@ fn show_options_menu(
                 GameItem::Language => {
                     Row::with_value(lang.language(), format!("<  {}  >", lang.name()))
                 }
+                GameItem::SpeedUnits => Row::with_value(
+                    match lang {
+                        Language::Spanish => "Unidades de velocidad",
+                        Language::English => "Speed units",
+                    },
+                    format!("<  {}  >", settings.speed_units.label()),
+                ),
                 GameItem::Difficulty => Row::with_value(
                     match lang {
                         Language::Spanish => "Dificultad",

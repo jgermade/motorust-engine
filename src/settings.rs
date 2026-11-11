@@ -62,6 +62,8 @@ pub struct Settings {
     pub resolution: Resolution,
     pub fps: FpsLimit,
     pub language: Language,
+    /// What the speedometer counts in (Options > Game, under the language).
+    pub speed_units: SpeedUnits,
     pub controls: Controls,
     /// Volume of the sound effects and of the music (0 to 100 %), see
     /// [`crate::sound::fx_gain`] and [`crate::sound::music_gain`]. They are
@@ -181,6 +183,54 @@ pub struct Settings {
     /// [`crate::bench`]): never saved, and never saved over the player's.
     #[serde(skip)]
     pub transient: bool,
+}
+
+/// What speeds are counted in: kilometres or miles an hour.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
+pub enum SpeedUnits {
+    #[default]
+    Kmh,
+    Mph,
+}
+
+/// The units that can be chosen, in order.
+pub const SPEED_UNITS: [SpeedUnits; 2] = [SpeedUnits::Kmh, SpeedUnits::Mph];
+
+impl SpeedUnits {
+    /// How it is written.
+    pub fn label(self) -> &'static str {
+        match self {
+            SpeedUnits::Kmh => "km/h",
+            SpeedUnits::Mph => "mph",
+        }
+    }
+
+    /// A speed in m/s, in these units.
+    pub fn of(self, metres_a_second: f32) -> f32 {
+        metres_a_second
+            * match self {
+                SpeedUnits::Kmh => 3.6,
+                SpeedUnits::Mph => 3.6 / 1.609_344,
+            }
+    }
+
+    /// How far round the speedometer's scale a speed in these units goes,
+    /// as the km/h it would be at on a dial to 360 (see
+    /// [`crate::speedometer`]): in mph the same dial reads to 240.
+    pub fn on_dial(self, speed: f32) -> f32 {
+        match self {
+            SpeedUnits::Kmh => speed,
+            SpeedUnits::Mph => speed * 1.5,
+        }
+    }
+
+    /// The figure written at a mark of the dial (as km/h on a dial to 360).
+    pub fn mark(self, dial: u32) -> u32 {
+        match self {
+            SpeedUnits::Kmh => dial,
+            SpeedUnits::Mph => dial * 2 / 3,
+        }
+    }
 }
 
 /// How hard the races are.
@@ -381,6 +431,7 @@ impl Default for Settings {
             resolution: Resolution::default(),
             fps: FpsLimit::default(),
             language: Language::default(),
+            speed_units: SpeedUnits::default(),
             controls: Controls::default(),
             fx_volume: DEFAULT_VOLUME,
             music_volume: DEFAULT_VOLUME,
