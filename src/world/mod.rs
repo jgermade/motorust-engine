@@ -1206,7 +1206,10 @@ fn build(
         .then(|| {
             (
                 builder.meshes.add(sea::grid_mesh(basis.track.centerline())),
-                builder.grid_materials.add(sea::GridMaterial::new()),
+                builder.grid_materials.add(sea::GridMaterial::new(
+                    basis.track.centerline(),
+                    sky::Palette::of(scenery.sky).sun_direction(),
+                )),
             )
         });
     let cartoon_sea = builder

@@ -488,6 +488,10 @@ const GRID_PIXELS: f32 = 2.0;
 const GRID_FADE: (f32, f32) = (6000.0, 7000.0);
 const GRID_REACH: f32 = 7000.0;
 const GRID_STRIP: f32 = 60.0;
+/// The band of sea under the sun the grid lies on: half its width (m),
+/// running from the circuit out to the sun, and over how much of each side
+/// it fades (m).
+const GRID_BAND: (f32, f32) = (700.0, 400.0);
 pub const GRID_GLOW: Color = Color::srgb(0.17, 0.05, 0.33);
 
 /// How the grid is drawn (see `grid.wgsl`).
@@ -500,20 +504,32 @@ pub struct GridMaterial {
     /// from how far from the camera they fade, and where they are gone (m).
     #[uniform(1)]
     pub lines: Vec4,
+    /// xy: the way to the sun, level (x and z, length 1); zw: the middle of
+    /// the circuit (m, x and z), whence the band of grid runs out to it.
+    #[uniform(2)]
+    pub sun: Vec4,
+    /// x: half the band's width (m); y: over how much of its sides it fades.
+    #[uniform(3)]
+    pub band: Vec4,
 }
 
 impl GridMaterial {
-    pub fn new() -> Self {
+    /// The grid of a circuit whose road is `lap`, under a sun the way of
+    /// `sun` (towards it).
+    pub fn new(lap: &[Vec2], sun: Vec3) -> Self {
+        let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+        for &p in lap {
+            min = min.min(p);
+            max = max.max(p);
+        }
+        let middle = (min + max) / 2.0;
+        let way = Vec2::new(sun.x, sun.z).normalize_or(Vec2::Y);
         Self {
             color: GRID_GLOW.to_linear().to_vec4(),
             lines: Vec4::new(GRID_SPACING, GRID_PIXELS, GRID_FADE.0, GRID_FADE.1),
+            sun: Vec4::new(way.x, way.y, middle.x, middle.y),
+            band: Vec4::new(GRID_BAND.0, GRID_BAND.1, 0.0, 0.0),
         }
-    }
-}
-
-impl Default for GridMaterial {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
