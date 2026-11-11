@@ -327,6 +327,19 @@ pub fn structure_pieces(
             ));
             continue;
         }
+        if bridge.style == BridgeStyle::Skyway {
+            let light = scenery.curbs[0];
+            let (strips, hung) = skyway_lamps(track, &indices, light);
+            lamps.extend(hung);
+            pieces.push((
+                strips,
+                StandardMaterial {
+                    base_color: light,
+                    emissive: light.to_linear() * RING_GLOW,
+                    ..default()
+                },
+            ));
+        }
         let (deck, steel) = match bridge.style {
             BridgeStyle::Truss => truss_bridge_meshes(track, terrain, &indices),
             BridgeStyle::Skyway => skyway_meshes(track, terrain, &indices),
@@ -999,6 +1012,12 @@ fn tunnel_rings(track: &Track, indices: &[usize]) -> Mesh {
 /// the lap apart its pylons stand.
 const SKYWAY_DECK: Color = Color::srgb(0.3, 0.32, 0.36);
 const SKYWAY_PIER_EVERY: usize = 24;
+/// How high its masts rise over the deck (m), how many points of the lap
+/// ahead and behind their stays reach, and how bright the lamp under each
+/// beam is.
+const SKYWAY_MAST: f32 = 13.0;
+const SKYWAY_STAY: usize = 9;
+const SKYWAY_LUMENS: f32 = 1_400_000.0;
 
 /// A skyway: its deck on pairs of pylons every so often, and nothing more
 /// (the second mesh is empty).
@@ -1008,8 +1027,70 @@ fn skyway_meshes(track: &Track, terrain: &Terrain, indices: &[usize]) -> (Mesh, 
         .step_by(SKYWAY_PIER_EVERY)
         .chain(std::iter::once(last))
         .collect();
-    let deck = concrete_deck(track, terrain, indices, &piers);
+    let mut deck = concrete_deck(track, terrain, indices, &piers);
+    // What it is built on, in sight from the road: at each pair of pylons
+    // a mast either side, rising over the deck, a beam across between
+    // their tops, and stays from the tops down to the deck's edges ahead
+    // and behind.
+    let lateral = WALL_DISTANCE + 2.2;
+    for (number, &k) in piers.iter().enumerate() {
+        let i = indices[k];
+        let foot = |side: f32| track.surface_point(i, side * lateral);
+        let top = |side: f32| foot(side) + Vec3::Y * SKYWAY_MAST;
+        for side in [-1.0, 1.0] {
+            deck.beam(
+                foot(side) - Vec3::Y * DECK_DEPTH,
+                top(side),
+                1.4,
+                1.4,
+                Color::WHITE,
+            );
+            // Stays, at every other mast: to the deck's edge well ahead and
+            // behind.
+            if number % 2 == 0 {
+                for reach in [-(SKYWAY_STAY as isize), SKYWAY_STAY as isize] {
+                    let at = (k as isize + reach).clamp(0, last as isize) as usize;
+                    deck.beam(
+                        top(side) - Vec3::Y * 0.5,
+                        track.surface_point(indices[at], side * lateral),
+                        0.22,
+                        0.22,
+                        Color::WHITE,
+                    );
+                }
+            }
+        }
+        deck.beam(
+            top(-1.0) - Vec3::Y * 0.6,
+            top(1.0) - Vec3::Y * 0.6,
+            1.0,
+            1.2,
+            Color::WHITE,
+        );
+    }
     (deck.build(), MeshBuilder::default().build())
+}
+
+/// The lamps of a skyway along the points `indices` of the lap: one under
+/// the beam of each pair of masts, over the middle of the road, and the
+/// strip of light they hang as (the mesh).
+fn skyway_lamps(track: &Track, indices: &[usize], color: Color) -> (Mesh, Vec<Lamp>) {
+    let last = indices.len() - 1;
+    let mut strips = MeshBuilder::default();
+    let mut lamps = Vec::new();
+    let lateral = WALL_DISTANCE + 1.2;
+    for k in (0..=last).step_by(SKYWAY_PIER_EVERY) {
+        let i = indices[k];
+        let under = Vec3::Y * (SKYWAY_MAST - 1.35);
+        let at = |side: f32| track.surface_point(i, side * lateral) + under;
+        strips.beam(at(-1.0), at(1.0), 0.5, 0.25, Color::WHITE);
+        lamps.push(Lamp {
+            at: track.surface_point(i, 0.0) + under,
+            color: color.mix(&Color::WHITE, 0.5),
+            lumens: SKYWAY_LUMENS,
+        });
+    }
+    (strips.build(), lamps)
 }
 
 /// A steel truss bridge: a concrete deck (the first mesh) on piers, and two

@@ -73,34 +73,45 @@ const EDGE_LIGHT: f32 = 0.3;
 /// How a stretch of a road of plates is laid out (see [`plate_design`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PlateDesign {
-    /// Pale plates in two greys, dark panels let into them either side of
+    /// Grey plates in two shades, dark panels let into them either side of
     /// a spine.
     Panels,
-    /// A dark road with bars of amber across its middle.
-    Caution,
-    /// Pale plates with dark stripes slanting in from the edges, pointing
-    /// the way of the race.
-    Chevrons,
-    /// A grey road in lanes: a pale line either side of the middle one,
-    /// dashes of amber down it.
+    /// A dark road with chevrons of amber pointing the way of the race.
+    Hazard,
+    /// A black road with three lines of light along it, in the circuit's
+    /// first curb colour.
+    Neon,
+    /// Pale plates, nearly white, with dark chevrons.
+    Pale,
+    /// A blue-grey road in lanes: a pale line either side of the middle
+    /// one, dashes of amber down it.
     Lanes,
+    /// A black road with bars of light across its middle, in the circuit's
+    /// second curb colour.
+    Bars,
 }
 
 /// How long a stretch of one design is (m), and the designs in the order
-/// they come round the lap.
-const DESIGN_LENGTH: f32 = 160.0;
-const DESIGNS: [PlateDesign; 6] = [
+/// they come round the lap: never two alike in a row, dark after light.
+const DESIGN_LENGTH: f32 = 220.0;
+const DESIGNS: [PlateDesign; 8] = [
     PlateDesign::Panels,
-    PlateDesign::Chevrons,
+    PlateDesign::Neon,
+    PlateDesign::Pale,
+    PlateDesign::Hazard,
     PlateDesign::Lanes,
-    PlateDesign::Panels,
-    PlateDesign::Caution,
-    PlateDesign::Chevrons,
+    PlateDesign::Bars,
+    PlateDesign::Pale,
+    PlateDesign::Neon,
 ];
-/// The caution bars' and the lanes' lines' place across the road (shares
-/// of its half width), and the chevrons': in how many strips across each
-/// half they are laid, a stripe so many points long of every so many.
-const CAUTION_ACROSS: f32 = 0.55;
+/// The black of the roads with lights of their own, and the pale plates'
+/// two shades.
+const CARBON: Color = Color::srgb(0.06, 0.065, 0.08);
+const PALE: [Color; 2] = [Color::srgb(0.82, 0.84, 0.88), Color::srgb(0.72, 0.75, 0.8)];
+/// The bars' and the lanes' lines' place across the road (shares of its
+/// half width), and the chevrons': in how many strips across each half
+/// they are laid, a stripe so many points long of every so many.
+const BARS_ACROSS: f32 = 0.6;
 const LANE_ACROSS: f32 = 0.34;
 const CHEVRON_STRIPS: usize = 6;
 const CHEVRON_EVERY: usize = 8;
@@ -334,6 +345,9 @@ pub fn spawn_gantries(
         .gantries
         .iter()
         .filter(|gantry| within.is_none_or(|stretch| stretch.contains(gantry.along, lap)))
+        // None inside a tube, where an arch over the road has nowhere to
+        // stand: its checkpoint is there all the same.
+        .filter(|gantry| track.roll_at(track.index_at(gantry.along)) < 1e-5)
     {
         spawn_gantry(world, track, gantry, assets);
     }
@@ -492,12 +506,17 @@ fn spawn_surface(
         // Stretch after stretch of the road its own design (see
         // [`plate_design`]). The plates under them all:
         let design = |index: usize| plate_design(index as f32 * line.step_length());
+        let is = |index: usize, corners, wanted: PlateDesign| {
+            shown(index, corners) && design(index) == wanted
+        };
         spawn(
             ribbon(road, -half, half, 0.0, ASPHALT_TILE, |index, corners| {
+                let band = index / PLATE_POINTS % 2;
                 shown(index, corners).then(|| match design(index) {
-                    PlateDesign::Panels => PLATES[index / PLATE_POINTS % 2],
-                    PlateDesign::Caution => PANEL,
-                    PlateDesign::Chevrons => PLATES[0],
+                    PlateDesign::Panels => PLATES[band],
+                    PlateDesign::Hazard => PANEL,
+                    PlateDesign::Neon | PlateDesign::Bars => CARBON,
+                    PlateDesign::Pale => PALE[band],
                     PlateDesign::Lanes => SPINE,
                 })
             }),
@@ -508,8 +527,7 @@ fn spawn_surface(
         for (from, to) in [(near, far), (-far, -near)] {
             spawn(
                 ribbon(road, from, to, PAINT_LIFT, 1.0, |index, corners| {
-                    (shown(index, corners)
-                        && design(index) == PlateDesign::Panels
+                    (is(index, corners, PlateDesign::Panels)
                         && PANEL_POINTS.contains(&(index % PANEL_EVERY)))
                     .then_some(PANEL)
                 }),
@@ -537,38 +555,57 @@ fn spawn_surface(
             ),
             plates(),
         );
-        // Caution: bars of amber across the middle of a dark road. Lanes:
-        // a pale line either side of the middle lane.
-        let bars = CAUTION_ACROSS * half;
-        spawn(
-            ribbon(road, -bars, bars, PAINT_LIFT, 1.0, |index, corners| {
-                (shown(index, corners) && design(index) == PlateDesign::Caution && index % 4 == 0)
-                    .then_some(AMBER)
-            }),
-            plates(),
-        );
+        // Lanes: a pale line either side of the middle lane. Neon: a line
+        // of light there, and one down the middle.
         let lane = LANE_ACROSS * half;
         for (from, to) in [(lane, lane + LINE_WIDTH), (-lane - LINE_WIDTH, -lane)] {
             spawn(
                 ribbon(road, from, to, PAINT_LIFT, 1.0, |index, corners| {
-                    (shown(index, corners) && design(index) == PlateDesign::Lanes)
-                        .then_some(PLATES[0])
+                    is(index, corners, PlateDesign::Lanes).then_some(PALE[0])
                 }),
                 plates(),
             );
         }
-        // Chevrons: dark stripes slanting in from each edge to the middle,
-        // pointing the way of the race.
+        for (from, to) in [
+            (lane, lane + LINE_WIDTH),
+            (-lane - LINE_WIDTH, -lane),
+            (-LINE_WIDTH / 2.0, LINE_WIDTH / 2.0),
+        ] {
+            spawn(
+                ribbon(road, from, to, PAINT_LIFT, 1.0, |index, corners| {
+                    is(index, corners, PlateDesign::Neon).then_some(Color::WHITE)
+                }),
+                light_strip(scenery.curbs[0]),
+            );
+        }
+        // Bars: bars of light across the middle of a black road, in the
+        // circuit's second curb colour.
+        let bars = BARS_ACROSS * half;
+        spawn(
+            ribbon(road, -bars, bars, PAINT_LIFT, 1.0, |index, corners| {
+                (is(index, corners, PlateDesign::Bars) && index % 4 == 0).then_some(Color::WHITE)
+            }),
+            light_strip(scenery.curbs[1]),
+        );
+        // Chevrons slanting in from each edge to the middle, pointing the
+        // way of the race: of amber on the hazard's dark road, dark on the
+        // pale one.
         for strip in 0..CHEVRON_STRIPS {
             let across = |k: usize| half * k as f32 / CHEVRON_STRIPS as f32;
             let (inner, outer) = (across(strip), across(strip + 1));
             for (from, to) in [(inner, outer), (-outer, -inner)] {
                 spawn(
                     ribbon(road, from, to, PAINT_LIFT, 1.0, |index, corners| {
-                        (shown(index, corners)
-                            && design(index) == PlateDesign::Chevrons
-                            && (index + strip) % CHEVRON_EVERY < CHEVRON_POINTS)
-                            .then_some(PANEL)
+                        if !shown(index, corners)
+                            || (index + strip) % CHEVRON_EVERY >= CHEVRON_POINTS
+                        {
+                            return None;
+                        }
+                        match design(index) {
+                            PlateDesign::Hazard => Some(AMBER),
+                            PlateDesign::Pale => Some(PANEL),
+                            _ => None,
+                        }
                     }),
                     plates(),
                 );
@@ -2243,9 +2280,11 @@ pub mod tests {
         }
         for design in [
             PlateDesign::Panels,
-            PlateDesign::Caution,
-            PlateDesign::Chevrons,
+            PlateDesign::Hazard,
+            PlateDesign::Neon,
+            PlateDesign::Pale,
             PlateDesign::Lanes,
+            PlateDesign::Bars,
         ] {
             assert!((0..16).any(|k| plate_design(k as f32 * DESIGN_LENGTH) == design));
         }

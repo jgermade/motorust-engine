@@ -78,6 +78,9 @@ pub struct EngineParams {
     pub load: Param,
     /// Levantamiento de la rueda delantera (caballito), de 0 a 1.
     pub wheelie: Param,
+    /// Whether it is a bike that hovers (1) or one with an engine (0): a
+    /// turbine's whine and the rush of its thrust, with no explosions.
+    pub hover: Param,
     /// Volumen en cada oído.
     pub left: Param,
     pub right: Param,
@@ -319,6 +322,10 @@ impl EngineVoice {
         let dt = 1.0 / SAMPLE_RATE as f32;
         let load = self.load.clamp(0.0, 1.0);
         let wheelie = self.wheelie.clamp(0.0, 1.0);
+        if params.hover.get() > 0.5 {
+            let out = self.turbine(load, wheelie, noise, dt);
+            return (out * self.left, out * self.right);
+        }
 
         // Al hacer caballito el motor brama con tono más agudo y desahogado.
         let effective_rpm = self.rpm * (1.0 + 0.10 * wheelie);
@@ -375,6 +382,37 @@ impl EngineVoice {
             * (1.0 + 0.28 * wheelie);
         let out = (out * drive).tanh() * loudness;
         (out * self.left, out * self.right)
+    }
+}
+
+/// A turbine's lowest and highest notes (Hz), from idling to flat out, and
+/// the notes over it it sounds with (how many times higher, how loud).
+const TURBINE: (f32, f32) = (150.0, 1250.0);
+const TURBINE_NOTES: [(f32, f32); 3] = [(1.0, 0.5), (1.503, 0.22), (2.01, 0.14)];
+
+impl EngineVoice {
+    /// A bike that hovers: a whine that climbs with its speed, a few notes
+    /// together, slightly out of tune, so that it beats; the rush of its
+    /// thrust, louder the harder it pushes; and, drifting, a harsher roar.
+    /// No explosions: nothing of an engine's.
+    fn turbine(&mut self, load: f32, drift: f32, noise: &mut Noise, dt: f32) -> f32 {
+        let spin = (self.rpm / REDLINE).clamp(0.0, 1.1);
+        let pitch = TURBINE.0 + (TURBINE.1 - TURBINE.0) * spin * spin.sqrt();
+        // One turn of the lowest note: the others are read off it.
+        self.cycle = (self.cycle + pitch * dt).fract();
+        self.whine = (self.whine + pitch * 1.503 * dt).fract();
+        self.body = (self.body + pitch * 2.01 * dt).fract();
+        let phases = [self.cycle, self.whine, self.body];
+        let whine: f32 = TURBINE_NOTES
+            .iter()
+            .zip(phases)
+            .map(|(&(_, loud), phase)| loud * (TAU * phase).sin())
+            .sum();
+        let rush = self.pop_tone.process(noise.next());
+        let roar = self.wheelie_resonance.process(noise.next());
+        let out = whine * (0.5 + 0.5 * load) + rush * (0.25 + 0.9 * load) + 1.6 * drift * roar;
+        let loudness = (0.2 + 0.24 * load + 0.14 * spin) * (1.0 + 0.25 * drift);
+        (out * 1.4).tanh() * loudness
     }
 }
 
@@ -894,6 +932,35 @@ mod tests {
         assert!((l - r).abs() < 1e-5);
         let (l, r) = pan(1.0, 1.0);
         assert!(l.abs() < 1e-5 && (r - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_bike_that_hovers_whines_as_a_turbine_with_no_explosions() {
+        let power = |hover: f32, rpm: f32| {
+            let controls = engine_at(rpm, 1.0);
+            controls.engines[0].hover.set(hover);
+            let samples: Vec<f32> = render(&controls, 1.0).iter().map(|(l, _)| *l).collect();
+            // How much of it is below 120 Hz, where an engine's firing is
+            // and a turbine has nothing: the mean over 1/240 s windows.
+            let window = SAMPLE_RATE as usize / 240;
+            let low: f32 = samples
+                .chunks(window)
+                .map(|chunk| (chunk.iter().sum::<f32>() / chunk.len() as f32).powi(2))
+                .sum::<f32>()
+                / (samples.len() / window) as f32;
+            let all = samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32;
+            (all, low / all.max(1e-9))
+        };
+        let (engine, engine_low) = power(0.0, 6000.0);
+        let (turbine, turbine_low) = power(1.0, 6000.0);
+        // Heard, and with far less of the low thump of explosions.
+        assert!(
+            turbine > 0.1 * engine && turbine > 1e-4,
+            "{turbine} {engine}"
+        );
+        assert!(turbine_low < 0.5 * engine_low, "{turbine_low} {engine_low}");
+        // And no silence standing still.
+        assert!(power(1.0, 1200.0).0 > 1e-5);
     }
 
     #[test]

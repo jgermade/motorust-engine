@@ -548,7 +548,7 @@ pub mod tests {
     ) {
         for circuit in circuits.iter() {
             let track = Track::new(&circuit.layout);
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let rival = Rival {
                 skill: 0.95,
                 lane: 2.0,
@@ -593,7 +593,7 @@ pub mod tests {
         let track = Track::new(&circuit.layout);
         let lap = track.lap_length();
         let points = crate::race::checkpoints(&circuit.checkpoints(), lap);
-        let tuning = BikeTuning::default();
+        let tuning = BikeTuning::on(circuit);
         let rival = Rival {
             skill,
             lane: 0.0,
@@ -686,7 +686,7 @@ pub mod tests {
             if track.loops().is_empty() {
                 continue;
             }
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let rival = Rival {
                 skill: 0.9,
                 lane: -1.0,
@@ -743,7 +743,7 @@ pub mod tests {
     ) {
         for circuit in circuits.iter() {
             let track = Track::new(&circuit.layout);
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let dt = 1.0 / 120.0;
             let name = circuit.name;
             for fork in track.forks() {
@@ -807,7 +807,7 @@ pub mod tests {
             let track = Track::new(&circuit.layout);
             let forks = track.forks();
             let step = track.step_length();
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let dt = 1.0 / 120.0;
             for left in forks.iter().filter(|fork| fork.side > 0.0) {
                 let Some(right) = forks
@@ -877,7 +877,7 @@ pub mod tests {
                 continue;
             };
             let step = track.step_length();
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let dt = 1.0 / 120.0;
             let from = looped.fork as f32 * step - 60.0;
             let to = looped.join as f32 * step + 50.0;
@@ -937,7 +937,7 @@ pub mod tests {
             let Some(&looped) = track.loops().first() else {
                 continue;
             };
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let rival = Rival {
                 skill: 1.0,
                 lane: 0.0,
@@ -1002,7 +1002,7 @@ pub mod tests {
             let Some(&looped) = track.loops().first() else {
                 continue;
             };
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let rival = Rival {
                 skill: 1.0,
                 lane: -2.0,
@@ -1430,7 +1430,7 @@ pub mod tests {
     pub fn jumps_on_the_track_are_short_on(circuits: &'static crate::circuits::Circuits) {
         for circuit in circuits.iter() {
             let track = Track::new(&circuit.layout);
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             let rival = Rival {
                 skill: 1.0,
                 lane: 0.0,
@@ -1484,7 +1484,7 @@ pub mod tests {
             .find(|circuit| circuit.name == name)
             .unwrap_or_else(|| panic!("{name} is a circuit"));
         let track = Track::new(&circuit.layout);
-        let top = BikeTuning::default().max_speed;
+        let top = BikeTuning::on(circuit).max_speed;
         for along in (100..480).step_by(2) {
             let index = track.index_at(along as f32);
             let crest = track.crest(&crate::track::Nearest {
@@ -1513,7 +1513,7 @@ pub mod tests {
         // off it).
         for circuit in circuits.iter() {
             let track = Track::new(&circuit.layout);
-            let tuning = BikeTuning::default();
+            let tuning = BikeTuning::on(circuit);
             for (skill, lane) in [(0.9, 4.0), (0.95, 2.0), (1.0, -3.0)] {
                 let rival = Rival {
                     skill,

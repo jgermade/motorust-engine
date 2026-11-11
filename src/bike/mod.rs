@@ -644,6 +644,30 @@ impl Default for BikeTuning {
 }
 
 impl BikeTuning {
+    /// The bikes that hover: far quicker off the line and faster flat out
+    /// than those on wheels, with no tyre to spin up nor to hold them back
+    /// (their circuits are as much longer), and turning as much tighter at
+    /// their speed.
+    pub fn hovering() -> Self {
+        Self {
+            hover: true,
+            max_speed: HOVER_TOP_SPEED,
+            engine_accel: 26.0,
+            max_lateral_accel: 65.0 * (HOVER_TOP_SPEED / 80.0).powi(2) * 0.8,
+            ..default()
+        }
+    }
+
+    /// The bikes of `circuit`: those that hover where they do (see
+    /// [`crate::circuits::Circuit::hover`]), or those on wheels.
+    pub fn on(circuit: &crate::circuits::Circuit) -> Self {
+        if circuit.hover {
+            Self::hovering()
+        } else {
+            Self::default()
+        }
+    }
+
     /// Lo más deprisa que puede girar la moto a esta velocidad (rad/s), con
     /// la dirección a fondo.
     pub fn max_yaw_rate(&self, speed: f32) -> f32 {
@@ -663,9 +687,17 @@ pub fn parked_lean(hover: bool) -> f32 {
     if hover { 0.0 } else { STOPPED_LEAN }
 }
 
+/// How much the road is curled up (1/m, see `Track::roll_at`) for a bike
+/// on it to stand quite upright on its wall, not leaning at all.
+const TUBE_UPRIGHT: f32 = 0.05;
+
 /// Further than a bike rides in a step at any speed (m): moved more, it
 /// was taken round a tube's top.
 const ROUND_THE_TUBE: f32 = 6.0;
+
+/// How fast a bike that hovers goes flat out (m/s, 360 km/h: the top of
+/// the speedometer's dial).
+pub const HOVER_TOP_SPEED: f32 = 100.0;
 
 /// The bikes change gears as Options > Game says.
 fn follow_gears(settings: Res<Settings>, mut tuning: ResMut<BikeTuning>) {
@@ -683,9 +715,12 @@ fn follow_circuit(
     let (Some(circuits), Some(current)) = (circuits, current) else {
         return;
     };
-    let hover = circuits.get(*current).hover;
-    if tuning.hover != hover {
-        tuning.hover = hover;
+    let circuit = circuits.get(*current);
+    if tuning.hover != circuit.hover {
+        *tuning = BikeTuning {
+            gears: tuning.gears,
+            ..BikeTuning::on(circuit)
+        };
     }
 }
 
@@ -2544,6 +2579,13 @@ fn interpolate_bikes(
     for (child_of, mut transform) in &mut pivots {
         if let Ok((state, previous, _)) = bikes.get(child_of.parent()) {
             let lean = previous.0.lean.lerp(state.lean, alpha);
+            // In a tube the bike does not lean: steering takes it round
+            // the tube, upright on its wall.
+            let upright = track.as_deref().map_or(0.0, |track| {
+                let index = track.nearest_index_at(state.position, state.elevation);
+                (track.roll_at(index) / TUBE_UPRIGHT).min(1.0)
+            });
+            let lean = lean * (1.0 - upright);
             // Drifting, a hover bike's nose is swung into the bend.
             let drift = previous.0.drift.lerp(state.drift, alpha);
             transform.rotation = Quat::from_rotation_y(drift) * Quat::from_rotation_z(lean);
