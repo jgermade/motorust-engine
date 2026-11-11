@@ -479,14 +479,15 @@ fn chamfer(land: &[bool], width: usize, height: usize, wanted: bool) -> Vec<f32>
 /// The lines of a neon grid on the sea under a sunset of the 80s (see
 /// [`grid_mesh`]): how far apart (m), how wide (m), how far round the
 /// circuit they reach (m), from how far off the road they start fading and
-/// where they are gone (m), and their colour: a bright cyan, drawn over the
+/// where they are gone (m), and their colour: a dark indigo, drawn over the
 /// water as it is, out of the fog (which would turn them as pink as the
-/// sunset), so that it stands out on the sea's pinks and oranges.
+/// sunset), so that it stands out on the sea's pinks and oranges and on the
+/// sun's glare on the water, which washes out any light colour.
 const GRID_SPACING: f32 = 36.0;
 const GRID_WIDTH: f32 = 0.9;
-const GRID_REACH: f32 = 900.0;
-const GRID_FADE: (f32, f32) = (250.0, 850.0);
-pub const GRID_GLOW: Color = Color::srgb(0.15, 0.95, 1.0);
+const GRID_REACH: f32 = 1500.0;
+const GRID_FADE: (f32, f32) = (600.0, 1400.0);
+pub const GRID_GLOW: Color = Color::srgb(0.17, 0.05, 0.33);
 
 /// A neon grid on the sea, as the 80s drew the ground under their sunsets:
 /// lines [`GRID_SPACING`] apart either way, flat on the water (its height is
