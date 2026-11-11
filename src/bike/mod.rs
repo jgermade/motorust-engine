@@ -2547,7 +2547,11 @@ fn simulate_bikes(
                 .collect();
             let (position, heading, lateral) =
                 crash::rejoin_pose(&track, state.position, state.elevation, &others);
-            *state = BikeState::parked_at_level(&track, (position, heading), state.elevation);
+            // The nitro it had is kept, to get going again with.
+            *state = BikeState {
+                nitro: state.nitro,
+                ..BikeState::parked_at_level(&track, (position, heading), state.elevation)
+            };
             // Without a different previous state, interpolation draws no trip.
             previous.0 = *state;
             *knock = Knock::default();

@@ -21,7 +21,8 @@ pub struct Mark {
 
 /// A stretch of banking (see [`Banking`]): from `from` to `to` m along the
 /// lap, its bends banked `factor` times as much, raised on supports or
-/// not, gripping `grip` times as hard. `was`: which of the file's it was.
+/// not, gripping `grip` times as hard, banking at most `steep` times as
+/// steeply. `was`: which of the file's it was.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Span {
     pub from: f32,
@@ -29,6 +30,7 @@ pub struct Span {
     pub factor: f32,
     pub raised: bool,
     pub grip: f32,
+    pub steep: f32,
     pub was: Option<usize>,
 }
 
@@ -87,6 +89,7 @@ impl Span {
                 factor: banking.factor,
                 raised: banking.raised,
                 grip: banking.grip,
+                steep: banking.steep,
                 was: Some(was),
             })
             .collect()
@@ -100,6 +103,7 @@ impl Span {
             factor: self.factor,
             raised: self.raised,
             grip: self.grip,
+            steep: self.steep,
         }
     }
 
@@ -121,6 +125,9 @@ impl Span {
         }
         if self.grip != 1.0 {
             text.push_str(&format!(", grip: {}", centimetres(self.grip)));
+        }
+        if self.steep != 1.0 {
+            text.push_str(&format!(", steep: {}", centimetres(self.steep)));
         }
         text.push(')');
         text
@@ -215,6 +222,7 @@ pub fn span_at(spans: &[Span], along: f32, lap: f32) -> Option<(usize, Span)> {
             factor: NEW_FACTOR,
             raised: false,
             grip: 1.0,
+            steep: 1.0,
             was: None,
         },
     ))
@@ -377,6 +385,7 @@ mod tests {
             factor: 1.0,
             raised: false,
             grip: 1.0,
+            steep: 1.0,
             was: None,
         }
     }

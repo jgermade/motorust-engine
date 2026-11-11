@@ -388,26 +388,29 @@ impl EngineVoice {
     }
 }
 
-/// A turbine's drone: its lowest note from idling to flat out (Hz), and the
-/// harmonics over it it growls with (each softer); its whine, far quieter,
-/// and the notes it climbs between (Hz); how fast the thrust throbs (Hz,
-/// idling and flat out); and where the rumble and the roar of its thrust
-/// sound (Hz, and how narrow).
-const DRONE: (f32, f32) = (34.0, 92.0);
-const DRONE_HARMONICS: usize = 7;
-const WHINE_NOTES: (f32, f32) = (180.0, 620.0);
-const THROB: (f32, f32) = (5.0, 11.0);
-const RUMBLE: (f32, f32) = (65.0, 0.7);
-const THRUST: (f32, f32) = (190.0, 0.6);
-const BLAST: (f32, f32) = (480.0, 0.8);
-/// Over what it is all darkened from (Hz, idling and flat out): a turbine
-/// heard from outside, its hiss lost in the air.
-const DARKEN: (f32, f32) = (320.0, 750.0);
+/// A turbine's voice: its note from idling to flat out (Hz), sounded by two
+/// saws a little out of tune with each other (how far, as a share) with as
+/// many harmonics; the electric whine over it (how many times higher, the
+/// two notes of it); how fast the thrust throbs (Hz, idling and flat out);
+/// where the rumble and the roar of its thrust sound (Hz, and how narrow);
+/// what it is all darkened from (Hz, idling and flat out), and how loud it
+/// is over the whole.
+const NOTE: (f32, f32) = (52.0, 175.0);
+const DETUNE: f32 = 0.012;
+const HARMONICS: usize = 14;
+const WHINE_OVER: (f32, f32) = (4.0, 6.0);
+const THROB: (f32, f32) = (6.0, 13.0);
+const RUMBLE: (f32, f32) = (60.0, 0.7);
+const THRUST: (f32, f32) = (210.0, 0.6);
+const BLAST: (f32, f32) = (520.0, 0.8);
+const DARKEN: (f32, f32) = (700.0, 2200.0);
+const TURBINE_GAIN: f32 = 1.35;
 
 /// What a turbine keeps from one sample to the next.
 struct Turbine {
-    drone: f32,
-    whine: f32,
+    saws: [f32; 2],
+    sub: f32,
+    whine: [f32; 2],
     throb: f32,
     rumble: BandPass,
     thrust: BandPass,
@@ -419,8 +422,9 @@ struct Turbine {
 impl Default for Turbine {
     fn default() -> Self {
         Self {
-            drone: 0.0,
-            whine: 0.0,
+            saws: [0.0, 0.31],
+            sub: 0.0,
+            whine: [0.0, 0.5],
             throb: 0.0,
             rumble: BandPass::tuned(RUMBLE.0, RUMBLE.1),
             thrust: BandPass::tuned(THRUST.0, THRUST.1),
@@ -430,40 +434,55 @@ impl Default for Turbine {
     }
 }
 
+/// A saw wave at `phase` (0..1) with its first `harmonics` harmonics.
+fn saw(phase: f32, harmonics: usize) -> f32 {
+    (1..=harmonics)
+        .map(|n| (TAU * phase * n as f32).sin() / n as f32)
+        .sum::<f32>()
+}
+
 impl EngineVoice {
-    /// A bike that hovers: a deep drone that climbs with its speed, growling
-    /// with its harmonics; under it the rumble and the roar of its thrust,
-    /// throbbing, the louder the harder it pushes; a whine over it, faint;
-    /// and, drifting, a harsher blast. No explosions: nothing of an
-    /// engine's, and nothing of a scooter's thin buzz.
+    /// A bike that hovers, as a modern machine sounds: a rich, driven note
+    /// that climbs with its speed (two saws out of tune, beating, over a
+    /// sub an octave down), an electric whine over it, and under it all
+    /// the rumble and roar of its thrust, throbbing, the louder the harder
+    /// it pushes; drifting, a harsher blast. Darkened, as heard from
+    /// outside, and driven hard: powerful, never thin.
     fn turbine(&mut self, load: f32, drift: f32, noise: &mut Noise, dt: f32) -> f32 {
         let spin = (self.rpm / REDLINE).clamp(0.0, 1.1);
         let turbine = &mut self.turbine;
-        let drone = DRONE.0 + (DRONE.1 - DRONE.0) * spin;
-        turbine.drone = (turbine.drone + drone * dt).fract();
-        let growl: f32 = (1..=DRONE_HARMONICS)
-            .map(|n| (TAU * turbine.drone * n as f32).sin() / (n as f32).powf(1.2))
-            .sum();
-        let whine = WHINE_NOTES.0 + (WHINE_NOTES.1 - WHINE_NOTES.0) * spin;
-        turbine.whine = (turbine.whine + whine * dt).fract();
+        let note = NOTE.0 + (NOTE.1 - NOTE.0) * spin;
+        for (k, phase) in turbine.saws.iter_mut().enumerate() {
+            let tune = 1.0 + DETUNE * (k as f32 - 0.5);
+            *phase = (*phase + note * tune * dt).fract();
+        }
+        turbine.sub = (turbine.sub + note * 0.5 * dt).fract();
+        for (k, phase) in turbine.whine.iter_mut().enumerate() {
+            let over = [WHINE_OVER.0, WHINE_OVER.1][k];
+            *phase = (*phase + note * over * dt).fract();
+        }
         let throb_rate = THROB.0 + (THROB.1 - THROB.0) * spin;
         turbine.throb = (turbine.throb + throb_rate * dt).fract();
-        let throb = 1.0 + 0.25 * (TAU * turbine.throb).sin();
+        let throb = 1.0 + 0.2 * (TAU * turbine.throb).sin();
+        let body = 0.5 * (saw(turbine.saws[0], HARMONICS) + saw(turbine.saws[1], HARMONICS));
+        let sub = (TAU * turbine.sub).sin();
+        let whine = 0.6 * (TAU * turbine.whine[0]).sin() + 0.4 * (TAU * turbine.whine[1]).sin();
         let rumble = turbine.rumble.process(noise.next());
         let thrust = turbine.thrust.process(noise.next());
         let blast = turbine.blast.process(noise.next());
-        let out = 0.55 * growl * (0.6 + 0.4 * load)
-            + 6.0 * rumble * (0.5 + 0.8 * load) * throb
+        let out = 0.75 * body * (0.55 + 0.45 * load)
+            + 0.6 * sub
+            + 0.16 * whine * (0.35 + 0.65 * spin)
+            + 5.0 * rumble * (0.5 + 0.8 * load) * throb
             + 3.5 * thrust * (0.3 + 0.9 * load) * throb
-            + 0.07 * (TAU * turbine.whine).sin() * (0.4 + 0.6 * spin)
-            + 2.6 * drift * blast;
-        let out = (out * 1.3).tanh();
+            + 2.8 * drift * blast;
+        let out = (out * (1.4 + 0.8 * load)).tanh();
         let cutoff = DARKEN.0 + (DARKEN.1 - DARKEN.0) * spin.min(1.0);
         let keep = 1.0 - (-TAU * cutoff * dt).exp();
         turbine.dark[0] += (out - turbine.dark[0]) * keep;
         turbine.dark[1] += (turbine.dark[0] - turbine.dark[1]) * keep;
-        let loudness = (0.24 + 0.26 * load + 0.12 * spin) * (1.0 + 0.25 * drift);
-        1.6 * turbine.dark[1] * loudness
+        let loudness = (0.42 + 0.33 * load + 0.15 * spin) * (1.0 + 0.25 * drift);
+        TURBINE_GAIN * turbine.dark[1] * loudness
     }
 }
 
@@ -986,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bike_that_hovers_roars_deep_as_a_turbine() {
+    fn a_bike_that_hovers_sounds_loud_deep_and_driven() {
         let sound = |hover: f32, rpm: f32| {
             let controls = engine_at(rpm, 1.0);
             controls.engines[0].hover.set(hover);
@@ -1009,11 +1028,11 @@ mod tests {
         eprintln!(
             "engine {engine} {engine_bright} Hz; turbine {turbine} {bright} Hz, flat out {flat_out} Hz"
         );
-        // Heard, as loud as an engine near enough.
-        assert!(turbine > 0.3 * engine, "{turbine} {engine}");
-        // Deep, even flat out: no scooter's buzz.
-        assert!(bright < 0.7 * engine_bright, "{bright} {engine_bright}");
-        assert!(flat_out < 450.0, "{flat_out} Hz");
+        // Heard well: louder than an engine.
+        assert!(turbine > 1.2 * engine, "{turbine} {engine}");
+        // Deeper than an engine, even flat out: no scooter's buzz.
+        assert!(bright < 0.8 * engine_bright, "{bright} {engine_bright}");
+        assert!(flat_out < 800.0, "{flat_out} Hz");
         // And no silence standing still.
         assert!(sound(1.0, 1200.0).0 > 1e-5);
     }

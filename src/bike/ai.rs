@@ -1186,11 +1186,14 @@ pub mod tests {
                     if racer.crash.is_over() {
                         let (position, heading, lateral) =
                             rejoin_pose(track, racer.state.position, racer.state.elevation, &[]);
-                        racer.state = BikeState::parked_at_level(
-                            track,
-                            (position, heading),
-                            racer.state.elevation,
-                        );
+                        racer.state = BikeState {
+                            nitro: racer.state.nitro,
+                            ..BikeState::parked_at_level(
+                                track,
+                                (position, heading),
+                                racer.state.elevation,
+                            )
+                        };
                         racer.knock = Knock::default();
                         racer.crash = CrashState::default();
                         racer.line.0 = lateral;

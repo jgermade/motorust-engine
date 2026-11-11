@@ -354,14 +354,15 @@ impl Palette {
                 glint: GLINT,
                 deep_water: Some(Color::srgb(0.01, 0.03, 0.08)),
             },
-            // A great city's night under its haze: dark teal overhead, a dull
-            // amber glow low down, the haze near and rust-coloured; a dim
-            // warm light from high up, a cold fill, and the picture a
-            // little crushed and saturated, as a film of neon in the rain.
+            // A great city's night under its haze: deep blue overhead, the
+            // haze low down lit violet and magenta by the city's signs, and
+            // near, so that the city's feet are lost in it; a dim light from
+            // high up, a cold fill, and the picture a little crushed and
+            // saturated, as a film of neon in the rain.
             SkyStyle::Smog => Self {
-                zenith: Color::srgb(0.02, 0.05, 0.07),
-                above_horizon: Color::srgb(0.13, 0.1, 0.1),
-                horizon: Color::srgb(0.3, 0.17, 0.12),
+                zenith: Color::srgb(0.02, 0.03, 0.09),
+                above_horizon: Color::srgb(0.16, 0.07, 0.2),
+                horizon: Color::srgb(0.32, 0.14, 0.3),
                 glow: 0.0,
                 glow_color: Color::srgb(0.9, 0.5, 0.2),
                 sun_azimuth: 0.3 * std::f32::consts::PI,
@@ -372,7 +373,7 @@ impl Palette {
                 ambient: Color::srgb(0.6, 0.7, 0.85),
                 ambient_brightness: 560.0,
                 clouds: Color::srgba(0.4, 0.25, 0.15, 0.0),
-                fog: (350.0, 2800.0),
+                fog: (180.0, 2100.0),
                 grade: Grade {
                     saturation: 1.12,
                     contrast: 1.18,

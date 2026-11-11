@@ -222,7 +222,9 @@ pub struct Fork {
 /// off it beside it, alike.
 /// Where `grip` is more than 1, the road grips the tyres that much harder
 /// across (as the toy cars' banked track does, see [`Track::grip_beside`]),
-/// and may bank as much more steeply.
+/// and may bank as much more steeply. Where `steep` is more than 1, it may
+/// bank that much more steeply than the most a road banks (as an
+/// anti-gravity circuit's bends do), gripping no harder.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Banking {
@@ -233,6 +235,8 @@ pub struct Banking {
     pub raised: bool,
     #[serde(default = "one")]
     pub grip: f32,
+    #[serde(default = "one")]
+    pub steep: f32,
 }
 
 /// A [`Banking`]'s grip where a circuit's file leaves it out: as any road's.
@@ -771,12 +775,21 @@ impl Track {
                 .find(|banking| (banking.from..banking.to).contains(&along))
                 .map_or(1.0, |banking| banking.factor)
         };
+        let steep = |j: usize| {
+            let along = (j % n) as f32 * step;
+            layout
+                .banking
+                .iter()
+                .find(|banking| (banking.from..banking.to).contains(&along))
+                .map_or(1.0, |banking| banking.steep)
+        };
         track.bank = (0..n)
             .map(|i| {
                 let window = (i + n - BANK_SMOOTHING)..=(i + n + BANK_SMOOTHING);
                 let count = window.clone().count() as f32;
                 let curvature = window.map(|j| track.curvature(j) * factor(j)).sum::<f32>() / count;
-                (curvature * BANK_PER_CURVATURE).clamp(-MAX_BANK, MAX_BANK)
+                let most = MAX_BANK * steep(i);
+                (curvature * BANK_PER_CURVATURE).clamp(-most, most)
             })
             .collect();
         if !layout.narrows.is_empty() {
@@ -3078,7 +3091,12 @@ pub mod tests {
                 let grip = (i as isize - reach..=i as isize + reach)
                     .map(|j| track.grip_at(0, j.rem_euclid(n as isize) as usize))
                     .fold(1.0, f32::max);
-                assert!(track.bank[i].abs() <= MAX_BANK * grip + 1e-5);
+                let steepest = circuits
+                    .iter()
+                    .flat_map(|circuit| circuit.layout.banking.iter())
+                    .map(|banking| banking.steep)
+                    .fold(1.0, f32::max);
+                assert!(track.bank[i].abs() <= MAX_BANK * grip.max(steepest) + 1e-5);
             }
             // Las curvas cerradas sí tienen peralte.
             assert!(track.bank.iter().any(|b| b.abs() > 0.08), "{name}");

@@ -210,7 +210,110 @@ fn tube_meshes(road: Road, glazed: impl Fn(usize) -> bool) -> (Mesh, Mesh) {
             }
         }
     }
+    roof_tube(&road, &glazed, &mut glass, &mut hoops);
     (glass.build(), hoops.build())
+}
+
+/// How many strips across a tube's glass roof is, where the road has yet
+/// to close into it.
+const ROOF_STRIPS: usize = 18;
+
+/// Where the glass of a tube does not close over the road (along its way in
+/// and out, where the road is still curling up, and where it is glazed
+/// before it curls at all), a roof of glass over it: an arch from the top
+/// edge of the glass on one side to the other's, as high at its top as the
+/// tube is, with its hoops: the way into the tube and out of it closed
+/// round the riders.
+fn roof_tube(
+    road: &Road,
+    glazed: &impl Fn(usize) -> bool,
+    glass: &mut MeshBuilder,
+    hoops: &mut MeshBuilder,
+) {
+    let line = road.line();
+    let indices: Vec<usize> = (0..line.segment_count()).filter(|&i| glazed(i)).collect();
+    let curl = indices
+        .iter()
+        .map(|&i| line.roll_at(i))
+        .fold(0.0_f32, f32::max);
+    if indices.is_empty() || curl < 1e-5 {
+        return;
+    }
+    // As high as the tube: its diameter over the road.
+    let apex = 2.0 / curl;
+    let edge = |i: usize, side: f32| {
+        let top = match line.roll_at(i) {
+            roll if roll > 1e-5 => (std::f32::consts::PI / roll).min(line.wall_at(i)),
+            _ => line.wall_at(i),
+        };
+        road.surface_point(i, side * top) + Vec3::Y * SURFACE_Y
+    };
+    // The arch at point `i`: `ROOF_STRIPS + 1` points from the right edge
+    // over to the left, if the glass is open there.
+    let arch = |i: usize| -> Option<Vec<Vec3>> {
+        if line.roll_at(i) * line.wall_at(i) >= std::f32::consts::PI {
+            return None;
+        }
+        let middle = road.surface_point(i, 0.0) + Vec3::Y * SURFACE_Y;
+        let across = (road.surface_point(i, 1.0) - road.surface_point(i, 0.0))
+            .with_y(0.0)
+            .normalize_or_zero();
+        let (right, left) = (edge(i, -1.0), edge(i, 1.0));
+        let offset = |p: Vec3| ((p - middle).dot(across).abs(), p.y - middle.y);
+        let ((wr, er), (wl, el)) = (offset(right), offset(left));
+        let (w, e) = ((wr + wl) / 2.0, (er + el) / 2.0);
+        if apex <= e + 0.5 {
+            return None;
+        }
+        // The circle through both edges and the apex over the middle.
+        let centre = (apex * apex - w * w - e * e) / (2.0 * (apex - e));
+        let radius = apex - centre;
+        let from = (e - centre).atan2(w);
+        let to = std::f32::consts::PI - from;
+        Some(
+            (0..=ROOF_STRIPS)
+                .map(|k| {
+                    let angle = from + (to - from) * k as f32 / ROOF_STRIPS as f32;
+                    middle
+                        + across * radius * angle.cos()
+                        + Vec3::Y * (centre + radius * angle.sin())
+                })
+                .collect(),
+        )
+    };
+    for &index in &indices {
+        let (Some(here), Some(next)) = (arch(index), arch(index + 1)) else {
+            continue;
+        };
+        for k in 0..ROOF_STRIPS {
+            let corners = [here[k], next[k], next[k + 1], here[k + 1]];
+            let normal = (corners[1] - corners[0]).cross(corners[3] - corners[0]);
+            glass.quad(
+                corners.map(|corner| (corner, Vec2::ZERO)),
+                normal.normalize_or_zero(),
+                Color::WHITE,
+            );
+            let out = normal.normalize_or_zero() * (TUBE_THICK / 2.0);
+            if index % HOOP_EVERY == 0 {
+                hoops.beam(
+                    here[k] + out,
+                    here[k + 1] + out,
+                    HOOP_WIDTH,
+                    TUBE_THICK,
+                    Color::WHITE,
+                );
+            }
+            if k % RAIL_EVERY == RAIL_EVERY - 1 {
+                hoops.beam(
+                    here[k + 1] + out,
+                    next[k + 1] + out,
+                    RAIL_WIDTH,
+                    TUBE_THICK,
+                    Color::WHITE,
+                );
+            }
+        }
+    }
 }
 
 /// A speed pad (see [`crate::track::SpeedPad`]): its dark plate, a little

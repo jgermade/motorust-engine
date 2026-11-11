@@ -140,11 +140,15 @@ struct NitroGauge(usize);
 #[derive(Component)]
 struct NitroComing(usize);
 
-/// The bar of the nitro: where its middle top is on the design, in the gap
-/// at the foot of the dial, how big it is (units), and its colours: the
-/// nitro's, brighter while it burns.
-const NITRO_AT: Vec2 = Vec2::new(CENTER, 292.0);
-const NITRO_SIZE: Vec2 = Vec2::new(150.0, 15.0);
+/// The bar of the nitro: where its middle top is on the design, over the
+/// dial, how big it is (units), and its bottle's (on its left: how far
+/// from the bar, how wide and tall its body, its neck and its valve).
+const NITRO_AT: Vec2 = Vec2::new(CENTER + 22.0, CENTER - EXTENT - 34.0);
+const NITRO_SIZE: Vec2 = Vec2::new(200.0, 24.0);
+const BOTTLE_GAP: f32 = 12.0;
+const BOTTLE: Vec2 = Vec2::new(26.0, 46.0);
+const BOTTLE_NECK: Vec2 = Vec2::new(10.0, 7.0);
+const BOTTLE_VALVE: Vec2 = Vec2::new(20.0, 6.0);
 const NITRO_COLOR: Color = crate::bike::model::hover::NITRO_LIGHT;
 const NITRO_BURNING: Color = Color::srgb(1.0, 0.82, 0.97);
 
@@ -257,65 +261,115 @@ pub fn spawn_speedometer(
             figures(SPEED_SIZE, SPEED_AT),
         ));
         dial.spawn((Unit(player), Text::new("km/h"), figures(UNIT_SIZE, UNIT_AT)));
-        // The nitro: a bar at the foot of the dial, filled as far as it is
-        // full, what a drift would add to it lighter after it, and its name
-        // under it; shown where the bikes hover.
+        // The nitro: a bar over the dial, filled as far as it is full,
+        // what a drift would add to it lighter after it, and a bottle of
+        // it on its left; shown where the bikes hover.
         let share = |units: f32| percent(units / (2.0 * EXTENT) * 100.0);
+        let left_of_bar = NITRO_AT.x - NITRO_SIZE.x / 2.0;
+        let bottle_left = left_of_bar - BOTTLE_GAP - BOTTLE.x;
+        let bottle_top = NITRO_AT.y + NITRO_SIZE.y - BOTTLE.y;
         dial.spawn((
             NitroFrame(player),
             Node {
                 position_type: PositionType::Absolute,
-                left: share(NITRO_AT.x - NITRO_SIZE.x / 2.0 - (CENTER - EXTENT)),
-                top: share(NITRO_AT.y - (CENTER - EXTENT)),
-                width: share(NITRO_SIZE.x),
-                height: share(NITRO_SIZE.y),
-                border: UiRect::all(px(1)),
+                left: share(bottle_left - (CENTER - EXTENT)),
+                top: share(bottle_top - BOTTLE_NECK.y - BOTTLE_VALVE.y - (CENTER - EXTENT)),
+                width: share(NITRO_AT.x + NITRO_SIZE.x / 2.0 - bottle_left),
+                height: share(BOTTLE.y + BOTTLE_NECK.y + BOTTLE_VALVE.y),
                 ..default()
             },
-            BorderColor::all(NITRO_COLOR.with_alpha(0.8)),
-            BackgroundColor(Color::srgba(0.05, 0.0, 0.08, 0.7)),
             Visibility::Hidden,
         ))
-        .with_children(|bar| {
-            bar.spawn((
-                NitroGauge(player),
+        .with_children(|nitro| {
+            // Units within the frame, from its top left corner.
+            let top_of = bottle_top - BOTTLE_NECK.y - BOTTLE_VALVE.y;
+            let width = NITRO_AT.x + NITRO_SIZE.x / 2.0 - bottle_left;
+            let height = BOTTLE.y + BOTTLE_NECK.y + BOTTLE_VALVE.y;
+            let place = |x: f32, y: f32, w: f32, h: f32| Node {
+                position_type: PositionType::Absolute,
+                left: percent((x - bottle_left) / width * 100.0),
+                top: percent((y - top_of) / height * 100.0),
+                width: percent(w / width * 100.0),
+                height: percent(h / height * 100.0),
+                ..default()
+            };
+            // The bottle: its valve, its neck and its body, rounded.
+            nitro.spawn((
                 Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(0),
-                    width: percent(0),
-                    height: percent(100),
-                    ..default()
+                    border_radius: BorderRadius::all(px(2)),
+                    ..place(
+                        bottle_left + (BOTTLE.x - BOTTLE_VALVE.x) / 2.0,
+                        top_of,
+                        BOTTLE_VALVE.x,
+                        BOTTLE_VALVE.y,
+                    )
                 },
                 BackgroundColor(NITRO_COLOR),
             ));
-            bar.spawn((
-                NitroComing(player),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(0),
-                    width: percent(0),
-                    height: percent(100),
-                    ..default()
-                },
-                BackgroundColor(NITRO_COLOR.with_alpha(0.35)),
+            nitro.spawn((
+                place(
+                    bottle_left + (BOTTLE.x - BOTTLE_NECK.x) / 2.0,
+                    top_of + BOTTLE_VALVE.y,
+                    BOTTLE_NECK.x,
+                    BOTTLE_NECK.y,
+                ),
+                BackgroundColor(NITRO_COLOR),
             ));
-            bar.spawn((
-                Text::new("NITRO"),
-                TextFont {
-                    font: font.clone().into(),
-                    font_size: FontSize::Px(UNIT_SIZE * scale * 1.1),
-                    ..default()
-                },
-                TextColor(NITRO_COLOR),
-                TextLayout::justify(Justify::Center),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(0),
-                    width: percent(100),
-                    top: percent(110),
-                    ..default()
-                },
-            ));
+            nitro
+                .spawn((
+                    Node {
+                        border_radius: BorderRadius::all(percent(40)),
+                        ..place(bottle_left, bottle_top, BOTTLE.x, BOTTLE.y)
+                    },
+                    BackgroundColor(NITRO_COLOR),
+                ))
+                .with_child((
+                    // A band round it, as on a bottle of gas.
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: percent(0),
+                        width: percent(100),
+                        top: percent(30),
+                        height: percent(14),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.0, 0.08, 0.8)),
+                ));
+            // The bar.
+            nitro
+                .spawn((
+                    Node {
+                        border: UiRect::all(px(1)),
+                        border_radius: BorderRadius::all(px(3)),
+                        ..place(left_of_bar, NITRO_AT.y, NITRO_SIZE.x, NITRO_SIZE.y)
+                    },
+                    BorderColor::all(NITRO_COLOR.with_alpha(0.8)),
+                    BackgroundColor(Color::srgba(0.05, 0.0, 0.08, 0.7)),
+                ))
+                .with_children(|bar| {
+                    bar.spawn((
+                        NitroGauge(player),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: percent(0),
+                            width: percent(0),
+                            height: percent(100),
+                            ..default()
+                        },
+                        BackgroundColor(NITRO_COLOR),
+                    ));
+                    bar.spawn((
+                        NitroComing(player),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: percent(0),
+                            width: percent(0),
+                            height: percent(100),
+                            ..default()
+                        },
+                        BackgroundColor(NITRO_COLOR.with_alpha(0.35)),
+                    ));
+                });
         });
     });
 }
