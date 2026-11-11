@@ -92,6 +92,11 @@ pub const TUBE_EASE: f32 = 50.0;
 /// see [`Track::round_the_tube`]).
 const TUBE_SEAM: f32 = 1.15;
 
+/// How far along the lap either side of where a point of a way off it
+/// counts as it is looked for beside it (m): beyond its own stretch, the lap
+/// may come back past it (over it, under it).
+const LAP_AROUND: f32 = 220.0;
+
 /// How far before a narrow stretch the walls start closing in, and after it
 /// they have opened out again (m).
 pub const NARROW_EASE: f32 = 25.0;
@@ -627,6 +632,29 @@ impl Track {
         Some((Vec3::new(ground.x, height, ground.y), round))
     }
 
+    /// How much of its own a road off the lap's surface is at each point,
+    /// given how much it would be by how far it is from the lap there
+    /// alone: the same towards its two ends, and all its own between the
+    /// first and the last points where it is quite apart.
+    fn apart_between_its_ends(apart: Vec<f32>) -> Vec<f32> {
+        let first = apart.iter().position(|&share| share >= 1.0);
+        let last = apart.iter().rposition(|&share| share >= 1.0);
+        match (first, last) {
+            (Some(first), Some(last)) => apart
+                .iter()
+                .enumerate()
+                .map(|(i, &share)| {
+                    if (first..=last).contains(&i) {
+                        1.0
+                    } else {
+                        share
+                    }
+                })
+                .collect(),
+            _ => apart,
+        }
+    }
+
     /// The boosters of the loops that have them (see
     /// [`VerticalLoop::boosters`]): on the lead in, and on the lap beside
     /// it, from the point of the lap nearest where the other begins.
@@ -966,10 +994,22 @@ impl Track {
         // Near the lap the road lies on its surface; once their walls part,
         // it has a surface of its own.
         let junction_apart = 2.0 * self.wall;
+        // Each point beside the stretch of the lap it counts as: where the
+        // lap passes over itself near it, that stretch, not the other.
+        let near_along = |i: usize| {
+            let index = self.index_at(counts_as(i as f32 * step));
+            let reach = (LAP_AROUND / self.step).ceil() as usize;
+            (index + self.sample_count() - reach) % self.sample_count()
+        };
+        let around = 2 * (LAP_AROUND / self.step).ceil() as usize;
         let on_lap: Vec<Nearest> = road
             .centerline
             .iter()
-            .map(|&point| self.project_on_lap(point))
+            .enumerate()
+            .map(|(i, &point)| match toward {
+                Some(_) => self.project_on_lap(point),
+                None => self.nearest_among(point, near_along(i), around),
+            })
             .collect();
         let lap_height: Vec<f32> = on_lap.iter().map(|on| self.height_on_road(on)).collect();
         let apart: Vec<f32> = on_lap
@@ -983,6 +1023,11 @@ impl Track {
                 smoothstep(junction_apart, junction_apart + blend, on.distance)
             })
             .collect();
+        // Once apart it stays so until it comes back to the lap to join it:
+        // a way off the lap that crosses over it (or under it) on its way
+        // is as near the lap there as at its ends, a storey apart, and has
+        // its own surface all the same.
+        let apart = Self::apart_between_its_ends(apart);
         let elevation = match toward {
             Some((looped, into_loop)) => {
                 Self::toward_loop(&apart, &lap_height, looped.height, into_loop, step)
@@ -1113,6 +1158,31 @@ impl Track {
                 .expect("el trazado tiene puntos");
         }
         self.project_on_lap_every(point)
+    }
+
+    /// Like [`Self::project_on_lap`], on the stretch of the lap at about
+    /// `height` where the lap passes over itself (a stretch over or under
+    /// it, out of reach of that height, is not the one meant), or the
+    /// nearest stretch if none is.
+    fn project_on_lap_at(&self, point: Vec2, height: f32) -> Nearest {
+        let nearest = self.project_on_lap(point);
+        if on_level_with(self.height_on_road(&nearest), height) {
+            return nearest;
+        }
+        let reach = nearest.distance + LEVEL_SPREAD;
+        let level = if self.searches_grid(point) {
+            self.nearest_in_grid(point, reach, |here| {
+                on_level_with(self.height_on_road(here), height)
+            })
+        } else {
+            (0..self.sample_count())
+                .map(|index| self.project(index, point))
+                .filter(|here| on_level_with(self.height_on_road(here), height))
+                .min_by(|a, b| a.distance.total_cmp(&b.distance))
+        };
+        level
+            .filter(|level| level.distance <= reach)
+            .unwrap_or(nearest)
     }
 
     /// Like [`Self::project_on_lap`], going through every segment.
@@ -1689,7 +1759,9 @@ impl Track {
         }
         let across = road.centerline[j] - road.centerline[i];
         let point = nearest.point + Vec2::new(across.y, -across.x).normalize() * nearest.lateral;
-        self.height_on_road(&self.project_on_lap(point))
+        // The lap at its own level, not another stretch passing over it.
+        let own_line = road.elevation[i].lerp(road.elevation[j], nearest.t);
+        self.height_on_road(&self.project_on_lap_at(point, own_line))
             .lerp(own, apart)
     }
 
@@ -1707,7 +1779,9 @@ impl Track {
         if apart >= 1.0 {
             return point;
         }
-        let lap = self.height_on_road(&self.project_on_lap(Vec2::new(point.x, point.z)));
+        let own_line = side_road.elevation[side_road.wrap(index as isize)];
+        let lap =
+            self.height_on_road(&self.project_on_lap_at(Vec2::new(point.x, point.z), own_line));
         Vec3::new(point.x, lap.lerp(point.y, apart), point.z)
     }
 
@@ -2683,6 +2757,11 @@ pub mod tests {
         tracks
     }
 
+    /// How far over or under the lap a way off it is (m) to cross it: more
+    /// than a bike and its rider are tall, and than something on one counts
+    /// as on the other (see [`LEVEL_REACH`]).
+    const CROSSING_APART: f32 = 8.0;
+
     pub fn a_fork_leaves_the_lap_and_joins_it_again_past_rock_on(
         circuits: &'static crate::circuits::Circuits,
     ) {
@@ -2707,6 +2786,9 @@ pub mod tests {
                 // Rideable, and between walls as wide as the lap's where the
                 // two share the road; further on, rock between them.
                 let mut widest = 0.0f32;
+                // Which side of the lap it is on: the fork's, until it
+                // crosses over (or under) the lap, then the other, and so on.
+                let (mut side, mut crossing) = (fork.side, false);
                 for i in 0..n - 1 {
                     let radius = 1.0 / road.curvature(i).abs();
                     assert!(radius > min_radius, "{name}: {radius} m at {i}");
@@ -2734,10 +2816,22 @@ pub mod tests {
                         assert!(crest < 0.0035, "{name}: crest of {crest} at {i}");
                     }
                     let lap = track.project_on_lap(road.centerline[i]);
-                    if lap.distance > 1.0 {
-                        assert_eq!(lap.lateral.signum(), fork.side, "{name}: {i}");
+                    // Braided with the lap, it may cross over it (or under
+                    // it) where the two are a storey and more apart: there
+                    // neither its side nor its walls are the lap's concern.
+                    let storeys = (height(i) - track.height_on_road(&lap)).abs() > CROSSING_APART;
+                    if storeys {
+                        crossing = true;
+                    } else if lap.distance > 1.0 {
+                        if crossing && lap.distance > lap_wall {
+                            side = lap.lateral.signum();
+                            crossing = false;
+                        }
+                        if !crossing {
+                            assert_eq!(lap.lateral.signum(), side, "{name}: {i}");
+                        }
                     }
-                    if lap.distance < lap_wall + road.wall_at(i) {
+                    if lap.distance < lap_wall + road.wall_at(i) && !storeys {
                         assert!(road.wall_at(i) > lap_wall - 0.25, "{name}: {i}");
                     }
                     widest = widest.max(lap.distance - lap_wall - road.wall_at(i));
