@@ -222,6 +222,12 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Reads a pack of meshes as the importers write it: `MRMESH01`, how many,
+/// and each: its name, how many vertices and indices, its flags, its
+/// positions, normals and texture coordinates, then what its flags say it
+/// has (1: joints and weights, for a rider's skeleton; 2: a second set of
+/// coordinates, `UV_1`, as a theme's own shader reads them: a city's walls
+/// measured in metres, for its windows), then its indices.
 pub fn read(bytes: &[u8]) -> Pack {
     let mut reader = Reader { bytes };
     assert_eq!(reader.take(8), b"MRMESH01", "no es un paquete de mallas");
@@ -255,6 +261,10 @@ pub fn read(bytes: &[u8]) -> Pack {
                     VertexAttributeValues::Uint16x4(joints),
                 );
                 mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, weights);
+            }
+            if flags & 2 != 0 {
+                let second: Vec<[f32; 2]> = reader.f32s(vertices * 2).as_chunks::<2>().0.to_vec();
+                mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, second);
             }
             let indices = reader
                 .take(indices * 4)
