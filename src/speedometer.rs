@@ -131,15 +131,22 @@ struct Figures(usize);
 #[derive(Component)]
 struct Unit(usize);
 
-/// The fill of the bar of the nitro of `player`'s speedometer.
+/// The bar of the nitro of `player`'s speedometer, its fill, and what the
+/// drift the bike is in would add to it.
+#[derive(Component)]
+struct NitroFrame(usize);
 #[derive(Component)]
 struct NitroGauge(usize);
+#[derive(Component)]
+struct NitroComing(usize);
 
-/// The bar of the nitro: where its middle top is on the design, how big it
-/// is (units), and its colour.
-const NITRO_AT: Vec2 = Vec2::new(CENTER, 226.0);
-const NITRO_SIZE: Vec2 = Vec2::new(70.0, 7.0);
-const NITRO_COLOR: Color = Color::srgb(0.45, 1.0, 0.3);
+/// The bar of the nitro: where its middle top is on the design, in the gap
+/// at the foot of the dial, how big it is (units), and its colours: the
+/// nitro's, brighter while it burns.
+const NITRO_AT: Vec2 = Vec2::new(CENTER, 292.0);
+const NITRO_SIZE: Vec2 = Vec2::new(150.0, 15.0);
+const NITRO_COLOR: Color = crate::bike::model::hover::NITRO_LIGHT;
+const NITRO_BURNING: Color = Color::srgb(1.0, 0.82, 0.97);
 
 /// A figure of the scale lit up while the pointer of `player`'s speedometer
 /// points at it: the speed it marks (km/h).
@@ -250,30 +257,64 @@ pub fn spawn_speedometer(
             figures(SPEED_SIZE, SPEED_AT),
         ));
         dial.spawn((Unit(player), Text::new("km/h"), figures(UNIT_SIZE, UNIT_AT)));
-        // The nitro: a bar under the unit, filled as far as it is full,
-        // shown where the bikes hover.
+        // The nitro: a bar at the foot of the dial, filled as far as it is
+        // full, what a drift would add to it lighter after it, and its name
+        // under it; shown where the bikes hover.
         let share = |units: f32| percent(units / (2.0 * EXTENT) * 100.0);
         dial.spawn((
+            NitroFrame(player),
             Node {
                 position_type: PositionType::Absolute,
                 left: share(NITRO_AT.x - NITRO_SIZE.x / 2.0 - (CENTER - EXTENT)),
                 top: share(NITRO_AT.y - (CENTER - EXTENT)),
                 width: share(NITRO_SIZE.x),
                 height: share(NITRO_SIZE.y),
+                border: UiRect::all(px(1)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            BorderColor::all(NITRO_COLOR.with_alpha(0.8)),
+            BackgroundColor(Color::srgba(0.05, 0.0, 0.08, 0.7)),
+            Visibility::Hidden,
         ))
         .with_children(|bar| {
             bar.spawn((
                 NitroGauge(player),
                 Node {
+                    position_type: PositionType::Absolute,
+                    left: percent(0),
                     width: percent(0),
                     height: percent(100),
                     ..default()
                 },
                 BackgroundColor(NITRO_COLOR),
-                Visibility::Hidden,
+            ));
+            bar.spawn((
+                NitroComing(player),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: percent(0),
+                    width: percent(0),
+                    height: percent(100),
+                    ..default()
+                },
+                BackgroundColor(NITRO_COLOR.with_alpha(0.35)),
+            ));
+            bar.spawn((
+                Text::new("NITRO"),
+                TextFont {
+                    font: font.clone().into(),
+                    font_size: FontSize::Px(UNIT_SIZE * scale * 1.1),
+                    ..default()
+                },
+                TextColor(NITRO_COLOR),
+                TextLayout::justify(Justify::Center),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: percent(0),
+                    width: percent(100),
+                    top: percent(110),
+                    ..default()
+                },
             ));
         });
     });
@@ -302,7 +343,10 @@ fn show_speed(
     others: Query<(&BikeState, &LocalPlayer), Without<Player>>,
     settings: Res<Settings>,
     tuning: Res<BikeTuning>,
-    mut gauges: Query<(&NitroGauge, &mut Node, &mut Visibility)>,
+    time: Res<Time>,
+    mut frames: Query<(&NitroFrame, &mut Visibility)>,
+    mut gauges: Query<(&NitroGauge, &mut Node, &mut BackgroundColor), Without<NitroComing>>,
+    mut coming: Query<(&NitroComing, &mut Node, &mut BackgroundColor), Without<NitroGauge>>,
     mut pointers: Query<(&Pointer, &mut UiTransform)>,
     mut figures: Query<(&Figures, &mut Text), Without<Unit>>,
     mut units: Query<(&Unit, &mut Text), Without<Figures>>,
@@ -323,9 +367,11 @@ fn show_speed(
     // The speed in the units chosen, and where it is on the dial.
     let speed = |index: usize| state(index).map_or(0.0, |state| units_of.of(state.speed.abs()));
     let kmh = |index: usize| units_of.on_dial(speed(index), fast);
-    // The nitro, where the bikes hover: how much each player has.
-    for (gauge, mut node, mut visibility) in &mut gauges {
-        let shown = if fast {
+    // The nitro, where the bikes hover: how much each player has, lit up
+    // while it burns and throbbing once full, and how much the drift it is
+    // in would add, brighter once it is long enough to.
+    for (frame, mut visibility) in &mut frames {
+        let shown = if fast && state(frame.0).is_some() {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -333,10 +379,41 @@ fn show_speed(
         if *visibility != shown {
             *visibility = shown;
         }
-        let full = state(gauge.0).map_or(0.0, |state| state.nitro);
-        let width = percent(100.0 * full);
+    }
+    let throb = 0.5 + 0.5 * (time.elapsed_secs() * 7.0).sin();
+    for (gauge, mut node, mut color) in &mut gauges {
+        let Some(state) = state(gauge.0) else {
+            continue;
+        };
+        let width = percent(100.0 * state.nitro);
         if node.width != width {
             node.width = width;
+        }
+        let shade = if state.burning {
+            NITRO_BURNING
+        } else if state.nitro >= 0.999 {
+            NITRO_COLOR.mix(&NITRO_BURNING, 0.5 * throb)
+        } else {
+            NITRO_COLOR
+        };
+        if color.0 != shade {
+            color.0 = shade;
+        }
+    }
+    for (more, mut node, mut color) in &mut coming {
+        let Some(state) = state(more.0) else {
+            continue;
+        };
+        let (to_come, charged) = state.nitro_to_come();
+        let to_come = to_come.min(1.0 - state.nitro);
+        let (left, width) = (percent(100.0 * state.nitro), percent(100.0 * to_come));
+        if node.left != left || node.width != width {
+            node.left = left;
+            node.width = width;
+        }
+        let shade = NITRO_COLOR.with_alpha(if charged { 0.45 + 0.35 * throb } else { 0.3 });
+        if color.0 != shade {
+            color.0 = shade;
         }
     }
     // With the gears on, the gear under the speed.

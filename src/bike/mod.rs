@@ -30,7 +30,7 @@ use crate::locale::Language;
 use crate::menu::{Choice, GameState, SplitChoices};
 use crate::pause::{self, DebugOptions, StickCurve, TurnLimit};
 use crate::settings::{Action, Settings};
-use crate::track::{SURFACE_Y, Surface, Track};
+use crate::track::{Nearest, SURFACE_Y, Surface, Track};
 use crate::welcome::GameMode;
 use ai::Rival;
 use chassis::{Chassis, Forces};
@@ -477,6 +477,8 @@ pub struct BikeState {
     /// drifts and on the stretches that fill it, burnt while the nitro is
     /// pressed, driving it on as a boost does.
     pub nitro: f32,
+    /// Whether it is burning its nitro now (a beam of light trails it).
+    pub burning: bool,
 }
 
 impl BikeState {
@@ -505,7 +507,15 @@ impl BikeState {
             charge: 0.0,
             boost: 0.0,
             nitro: 0.0,
+            burning: false,
         }
+    }
+
+    /// How much of a tank of nitro the drift it is in would give it, let go
+    /// now, and whether it is long enough yet to give any (see
+    /// [`DRIFT_CHARGED`]).
+    pub fn nitro_to_come(&self) -> (f32, bool) {
+        (NITRO_PER_CHARGE * self.charge, self.charge >= DRIFT_CHARGED)
     }
 
     /// How much of all it can a hover bike is drifting (0 to 1).
@@ -1069,6 +1079,7 @@ pub fn step(
         charge,
         boost,
         nitro,
+        burning,
         pitch: approach(state.pitch, target_pitch, PITCH_RESPONSE, dt),
         accel,
         chassis,
@@ -1163,6 +1174,7 @@ pub fn advance_hitting_walls(
         recharge: track.recharge_beside(&nearest),
     };
     let mut next = step(state, input, &ground, tuning, dt);
+    steady_in_the_tube(&mut next, input, track, &nearest, dt);
     // Over the top of a tube, it comes down the other side.
     let beside = track.nearest_at(next.position, next.elevation);
     if let Some(round) = track.round_the_tube(&beside) {
@@ -1173,6 +1185,54 @@ pub fn advance_hitting_walls(
     settle(&mut next, &ground, ground_height, dt);
     loop_ride::enter(&mut next, track);
     (next, wall)
+}
+
+/// In a tube, how fast a bike riding on is turned back to run along it
+/// (1/s, flat out; slower, as much less), and how far off along it the
+/// steering can still point it (rad, standing; flat out, a third of it).
+const TUBE_STEADY: f32 = 5.0;
+const TUBE_STEER: f32 = 0.3;
+
+/// Round a tube, the bike is held to run along it, the more firmly the
+/// faster it goes: it turns as the tube does, and is drawn back onto its
+/// line. There, upside down and the road curling up all round, steering it
+/// is hard. The steering still points it off its line a little,
+/// to go round the tube's wall to another lane, less so fast.
+fn steady_in_the_tube(
+    state: &mut BikeState,
+    input: &BikeInput,
+    track: &Track,
+    nearest: &Nearest,
+    dt: f32,
+) {
+    if nearest.road != 0 || !state.grounded || state.speed <= 0.0 {
+        return;
+    }
+    let curled = (track.roll_at(nearest.index) / TUBE_UPRIGHT).min(1.0);
+    if curled <= 0.0 {
+        return;
+    }
+    let pace = (state.speed / HOVER_TOP_SPEED).min(1.0);
+    // It turns as the tube does under it, and is drawn back onto its line.
+    let (_, before) = track.pose_beside(nearest, 0.0);
+    let (_, along) = track.pose_beside(&track.nearest_at(state.position, state.elevation), 0.0);
+    let follow = crate::geometry::wrap_angle(along - before) * curled * pace;
+    if follow.abs() < 0.2 {
+        state.heading += follow;
+    }
+    // Not a bike turned round in it, riding it the wrong way.
+    if crate::geometry::wrap_angle(along - state.heading).abs() > 1.0 {
+        return;
+    }
+    let steer = (input.steer + input.steer_direct).clamp(-1.0, 1.0);
+    let wanted = along + steer * TUBE_STEER * (1.0 - 2.0 / 3.0 * pace);
+    let hold = 1.0 - (-TUBE_STEADY * pace * curled * dt).exp();
+    state.heading += crate::geometry::wrap_angle(wanted - state.heading) * hold;
+    // And never further off its line than the steering can point it.
+    let most = TUBE_STEER * (1.0 - 2.0 / 3.0 * pace);
+    let off = crate::geometry::wrap_angle(state.heading - along);
+    let held = off.clamp(-most, most);
+    state.heading += (held - off) * curled * pace;
 }
 
 /// Speed into a wall below which hitting it is not felt in the controller
@@ -4368,6 +4428,51 @@ pub mod tests {
                 "girando {steer}: {} frente a {} en recta",
                 turning.speed,
                 straight.speed
+            );
+        }
+    }
+
+    pub fn in_a_tube_the_bike_is_held_to_run_along_it_on(
+        circuits: &'static crate::circuits::Circuits,
+    ) {
+        let tubed: Vec<_> = circuits
+            .iter()
+            .filter(|circuit| !circuit.layout.tubes.is_empty())
+            .collect();
+        assert!(!tubed.is_empty(), "some circuit has a tube");
+        for circuit in tubed {
+            let track = Track::new(&circuit.layout);
+            let tuning = BikeTuning::on(circuit);
+            let tube = &circuit.layout.tubes[0];
+            let index = track.index_at((tube.from + tube.to) / 2.0);
+            let (point, along) = track.pose_at(index);
+            let ride = |steer: f32| {
+                // Flat out, pointed well off its line.
+                let mut state = BikeState {
+                    speed: 0.95 * tuning.max_speed,
+                    ..BikeState::parked_on(&track, (point, along + 0.25))
+                };
+                let input = BikeInput {
+                    throttle: 1.0,
+                    steer_direct: steer,
+                    ..default()
+                };
+                for _ in 0..60 {
+                    state = advance(&state, &input, &track, &tuning, 1.0 / 120.0);
+                }
+                let nearest = track.nearest_at(state.position, state.elevation);
+                let (_, along) = track.pose_beside(&nearest, 0.0);
+                crate::geometry::wrap_angle(state.heading - along)
+            };
+            // Let go, half a second on it runs along the tube.
+            let off = ride(0.0);
+            assert!(off.abs() < 0.04, "{}: {off} rad off", circuit.name);
+            // Steered, it points a little off its line, no further.
+            let steered = ride(1.0);
+            assert!(
+                (0.02..=TUBE_STEER / 2.0).contains(&steered),
+                "{}: {steered} rad steered",
+                circuit.name
             );
         }
     }

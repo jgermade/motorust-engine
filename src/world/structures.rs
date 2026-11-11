@@ -1057,9 +1057,9 @@ fn tunnel_rings(track: &Track, indices: &[usize]) -> Mesh {
     rings.build()
 }
 
-/// A skyway's deck, darker than a bridge's concrete, and how many points of
-/// the lap apart its pylons stand.
-const SKYWAY_DECK: Color = Color::srgb(0.3, 0.32, 0.36);
+/// A skyway's deck, pale concrete, standing out against the dark city it
+/// runs through, and how many points of the lap apart its pylons stand.
+const SKYWAY_DECK: Color = Color::srgb(0.82, 0.84, 0.87);
 const SKYWAY_PIER_EVERY: usize = 24;
 /// How high its masts rise over the deck (m), how many points of the lap
 /// ahead and behind their stays reach, and how bright the lamp under each

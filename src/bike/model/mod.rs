@@ -117,6 +117,7 @@ impl Plugin for BikeModelPlugin {
                 spin_wheels,
                 brake_light,
                 hover::light_pads,
+                hover::trail_nitro,
                 (
                     (steer_front, rider::hang_off, rider::sit_up),
                     (

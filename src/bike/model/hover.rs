@@ -16,7 +16,9 @@
 //! - under each pad a pool of light on the road ([`PadGlow`]), gone while it
 //!   is in the air or down;
 //! - drifting (see `crate::bike::step`), its nose swings into the bend (the
-//!   bike's lean pivot turns it, with its rider).
+//!   bike's lean pivot turns it, with its rider);
+//! - burning its nitro, a beam of light trails it on the road from under
+//!   it ([`NitroTrail`]), growing as it burns and shrinking once let go.
 
 use std::f32::consts::TAU;
 
@@ -24,6 +26,7 @@ use bevy::{
     asset::RenderAssetUsages,
     image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     light::NotShadowCaster,
+    mesh::{Indices, PrimitiveTopology},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
@@ -136,20 +139,124 @@ fn glow_image() -> Image {
     image
 }
 
+/// The beam of light trailing `bike` while it burns its nitro, and how far
+/// out it is (0, gone, to 1, its whole length).
+#[derive(Component)]
+pub struct NitroTrail {
+    bike: Entity,
+    level: f32,
+}
+
+/// The beam: the colour of the nitro, how long and wide it is at its
+/// longest (m), how bright, and how fast it grows and shrinks (1/s).
+pub const NITRO_LIGHT: Color = Color::srgb(1.0, 0.35, 0.85);
+const TRAIL_LENGTH: f32 = 9.0;
+const TRAIL_WIDTH: f32 = 0.9;
+const TRAIL_STRENGTH: f32 = 1.0;
+const TRAIL_RATE: f32 = 7.0;
+/// Its picture's size (pixels, across and along).
+const TRAIL_PIXELS: (u32, u32) = (32, 128);
+
+/// How bright the beam is `across` its width from its middle (0 to 1, at
+/// its edge) and `along` it from the bike (0 to 1, at its tail): a bright
+/// core, fading out to its sides and its tail.
+fn trail_falloff(across: f32, along: f32) -> f32 {
+    let side = (1.0 - across.abs().clamp(0.0, 1.0)).powi(2);
+    let core = 1.0 - smoothstep(0.0, 0.35, across.abs());
+    let tail = (1.0 - along.clamp(0.0, 1.0)).powf(1.6) * smoothstep(0.0, 0.04, along);
+    (0.55 * side + 0.45 * core) * tail
+}
+
+/// The picture of the beam: white, fading out to its sides and its tail
+/// (its rows go along it, from the bike).
+fn trail_image() -> Image {
+    let (wide, long) = TRAIL_PIXELS;
+    let data = (0..wide * long)
+        .flat_map(|i| {
+            let (x, y) = ((i % wide) as f32, (i / wide) as f32);
+            let across = (x + 0.5) / wide as f32 * 2.0 - 1.0;
+            let along = (y + 0.5) / long as f32;
+            let alpha = (trail_falloff(across, along) * 255.0).round() as u8;
+            [255, 255, 255, alpha]
+        })
+        .collect();
+    let mut image = Image::new(
+        Extent3d {
+            width: wide,
+            height: long,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    image
+}
+
+/// The beam's mesh: a strip a metre wide and long, lying flat, from the
+/// bike (z 0) back (z 1), its picture's rows along it.
+fn trail_mesh() -> Mesh {
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        vec![
+            [-0.5, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.5, 0.0, 1.0],
+            [-0.5, 0.0, 1.0],
+        ],
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 4]);
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+    );
+    mesh.insert_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]));
+    mesh
+}
+
 /// What the pools of light of every hover bike share: their mesh (a square
 /// a metre on a side, lying flat) and their picture.
 pub(super) struct GlowParts {
     mesh: Handle<Mesh>,
     image: Handle<Image>,
+    trail_mesh: Handle<Mesh>,
+    trail_material: Handle<StandardMaterial>,
 }
 
 impl GlowParts {
     pub(super) fn new(world: &mut World) -> Self {
         let image = world.resource_mut::<Assets<Image>>().add(glow_image());
-        let mesh = world
-            .resource_mut::<Assets<Mesh>>()
-            .add(Plane3d::default().mesh().size(1.0, 1.0));
-        Self { mesh, image }
+        let trail_image = world.resource_mut::<Assets<Image>>().add(trail_image());
+        let mut meshes = world.resource_mut::<Assets<Mesh>>();
+        let mesh = meshes.add(Plane3d::default().mesh().size(1.0, 1.0));
+        let trail_mesh = meshes.add(trail_mesh());
+        let trail_material =
+            world
+                .resource_mut::<Assets<StandardMaterial>>()
+                .add(StandardMaterial {
+                    base_color: NITRO_LIGHT.with_alpha(TRAIL_STRENGTH),
+                    base_color_texture: Some(trail_image),
+                    unlit: true,
+                    alpha_mode: AlphaMode::Add,
+                    cull_mode: None,
+                    ..default()
+                });
+        Self {
+            mesh,
+            image,
+            trail_mesh,
+            trail_material,
+        }
     }
 
     /// The material of the pools of light of a model that hovers so: added
@@ -198,6 +305,18 @@ pub(super) fn spawn(
             ChildOf(bike),
         ));
     }
+    // The beam of the nitro, from under the rear pad back, gone until it
+    // burns.
+    let (rear, _) = pads(geometry)[1];
+    commands.spawn((
+        NitroTrail { bike, level: 0.0 },
+        Mesh3d(glow.trail_mesh.clone()),
+        MeshMaterial3d(glow.trail_material.clone()),
+        Transform::from_translation(rear + Vec3::Y * 0.01),
+        Visibility::Hidden,
+        NotShadowCaster,
+        ChildOf(bike),
+    ));
 }
 
 /// Whether a hover bike's pads light the road: on it, and not down.
@@ -216,6 +335,40 @@ pub(super) fn light_pads(
             continue;
         };
         let wanted = if pads_lit(state, crash) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *visibility != wanted {
+            *visibility = wanted;
+        }
+    }
+}
+
+/// How far out a beam is after `dt` s, from `level`: growing while the
+/// bike burns its nitro on the road, shrinking otherwise.
+pub fn trail_level(level: f32, burning: bool, dt: f32) -> f32 {
+    let wanted = if burning { 1.0 } else { 0.0 };
+    level + (wanted - level) * (1.0 - (-TRAIL_RATE * dt).exp())
+}
+
+/// The beams of the nitro: as long as they are out, along the road behind
+/// their bikes' rear pads.
+pub(super) fn trail_nitro(
+    time: Res<Time>,
+    bikes: Query<(&BikeState, Option<&CrashState>), With<Hovering>>,
+    mut trails: Query<(&mut NitroTrail, &mut Transform, &mut Visibility)>,
+) {
+    let dt = time.delta_secs();
+    for (mut trail, mut transform, mut visibility) in &mut trails {
+        let Ok((state, crash)) = bikes.get(trail.bike) else {
+            continue;
+        };
+        let burning = state.burning && pads_lit(state, crash);
+        trail.level = trail_level(trail.level, burning, dt);
+        let length = TRAIL_LENGTH * trail.level * (0.5 + 0.5 * (state.speed / 60.0).min(1.0));
+        transform.scale = Vec3::new(TRAIL_WIDTH, 1.0, length.max(1e-3));
+        let wanted = if trail.level > 0.02 {
             Visibility::Inherited
         } else {
             Visibility::Hidden
@@ -288,6 +441,24 @@ pub mod tests {
         // Its corners clear: no square shows on the road.
         assert_eq!(data[3], 0);
         assert_eq!(data[data.len() - 1], 0);
+    }
+
+    #[test]
+    fn the_beam_of_the_nitro_grows_while_it_burns_and_fades_after() {
+        let mut level = 0.0;
+        for _ in 0..30 {
+            level = trail_level(level, true, 1.0 / 60.0);
+        }
+        assert!(level > 0.95, "{level}");
+        for _ in 0..30 {
+            level = trail_level(level, false, 1.0 / 60.0);
+        }
+        assert!(level < 0.05, "{level}");
+        // Bright at the bike in its middle, gone at its edges and its tail.
+        assert!(trail_falloff(0.0, 0.1) > 0.8);
+        assert_eq!(trail_falloff(1.0, 0.1), 0.0);
+        assert_eq!(trail_falloff(0.0, 1.0), 0.0);
+        assert!(trail_falloff(0.0, 0.6) < trail_falloff(0.0, 0.2));
     }
 
     #[test]
