@@ -483,21 +483,21 @@ fn chamfer(land: &[bool], width: usize, height: usize, wanted: bool) -> Vec<f32>
 /// water as it is, out of the fog (which would turn them as pink as the
 /// sunset), so that it stands out on the sea's pinks and oranges and on the
 /// sun's glare on the water, which washes out any light colour.
-const GRID_SPACING: f32 = 60.0;
+const GRID_SPACING: f32 = 80.0;
 const GRID_WIDTH: f32 = 1.2;
 /// How much wider a line is the further it is from the road (m a metre),
 /// so that it keeps about its width on the screen; how long each of its
 /// pieces is (m), each turned to face the road on its own; and how high
 /// over the sea the eye on the road is taken to be (m).
-const GRID_WIDENING: f32 = 0.008;
+const GRID_WIDENING: f32 = 0.004;
 const GRID_PIECE: f32 = 15.0;
 const GRID_EYE: f32 = 12.0;
 /// From how far off the road a line's pieces start turning to face it, and
 /// from where they face it wholly (m): nearer, seen from above, they lie
 /// flat, or they would stand up like a fence.
 const GRID_TURN: (f32, f32) = (80.0, 400.0);
-const GRID_REACH: f32 = 1100.0;
-const GRID_FADE: (f32, f32) = (400.0, 1000.0);
+const GRID_REACH: f32 = 800.0;
+const GRID_FADE: (f32, f32) = (250.0, 750.0);
 pub const GRID_GLOW: Color = Color::srgb(0.17, 0.05, 0.33);
 
 /// A neon grid on the sea, as the 80s drew the ground under their sunsets:
