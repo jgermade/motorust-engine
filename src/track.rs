@@ -40,6 +40,9 @@ pub struct Layout {
     /// bridge.
     #[serde(deserialize_with = "crate::circuits::data::leak", default)]
     pub narrows: &'static [Narrowing],
+    /// Speed pads on the lap (see [`SpeedPad`]): none if left out.
+    #[serde(deserialize_with = "crate::circuits::data::leak", default)]
+    pub pads: &'static [SpeedPad],
     /// Stretches where the road is a tube the bikes ride round the inside
     /// of (see [`Tube`]): none if left out.
     #[serde(deserialize_with = "crate::circuits::data::leak", default)]
@@ -82,6 +85,23 @@ pub struct Tube {
     pub to: f32,
     pub radius: f32,
 }
+
+/// A speed pad let into the lap: from `along` metres from the finish line
+/// on for [`PAD_LENGTH`] metres, [`PAD_WIDTH`] metres wide, its middle
+/// `lateral` metres to the left of the centre line (to the right if
+/// negative). A bike over it is boosted (see `crate::bike::step`): only
+/// one that rides over it, not the whole width of the road.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeedPad {
+    pub along: f32,
+    #[serde(default)]
+    pub lateral: f32,
+}
+
+/// How long and how wide a speed pad is (m).
+pub const PAD_LENGTH: f32 = 10.0;
+pub const PAD_WIDTH: f32 = 4.0;
 
 /// How far before a tube the road starts curling up, and after it has
 /// uncurled (m).
@@ -363,6 +383,8 @@ pub struct Track {
     /// centre line: one over the radius it curls with (1/m), nought where
     /// it lies as a road (see [`Tube`]). Empty: nowhere.
     roll: Vec<f32>,
+    /// The speed pads on the lap (see [`SpeedPad`]).
+    pads: Vec<SpeedPad>,
     /// On a road off the lap, how far along the lap each of its points
     /// counts as (m from the finish line). Empty on the lap.
     lap_along: Vec<f32>,
@@ -512,6 +534,7 @@ impl Track {
     pub fn new(layout: &Layout) -> Self {
         let mut track = Self::lap(layout);
         track.curl_tubes(layout.tubes);
+        track.pads = layout.pads.to_vec();
         for branch in layout.branches {
             track.add_branch(branch);
         }
@@ -706,6 +729,7 @@ impl Track {
             walls: Vec::new(),
             wall: layout.wall,
             roll: Vec::new(),
+            pads: Vec::new(),
             lap_along: Vec::new(),
             apart: Vec::new(),
             side_roads: Vec::new(),
@@ -973,6 +997,7 @@ impl Track {
             walls: Vec::new(),
             wall: self.wall,
             roll: Vec::new(),
+            pads: Vec::new(),
             lap_along: Vec::new(),
             apart: Vec::new(),
             side_roads: Vec::new(),
@@ -1250,6 +1275,25 @@ impl Track {
     /// leads into the loops that have them, and on the lap beside them.
     pub fn boosters(&self) -> &[Booster] {
         &self.boosters
+    }
+
+    /// The speed pads on the lap.
+    pub fn pads(&self) -> &[SpeedPad] {
+        &self.pads
+    }
+
+    /// Whether a speed pad is under a point already found (on the lap,
+    /// within its length and its width).
+    pub fn pad_beside(&self, nearest: &Nearest) -> bool {
+        if nearest.road != 0 || self.pads.is_empty() {
+            return false;
+        }
+        let along = (nearest.index as f32 + nearest.t) * self.step;
+        let lap = self.lap_length();
+        self.pads.iter().any(|pad| {
+            (along - pad.along).rem_euclid(lap) < PAD_LENGTH
+                && (nearest.lateral - pad.lateral).abs() < PAD_WIDTH / 2.0
+        })
     }
 
     /// The speed a booster under a point already found drives a bike on to
@@ -3049,5 +3093,34 @@ pub mod tests {
         let height = track.road_height(track.offset_point(200, 5.0));
         assert!((height - track.surface_point(200, 5.0).y).abs() < 0.05);
         assert!(nearest.point.distance(track.offset_point(200, 0.0)) < 0.1);
+    }
+
+    #[test]
+    fn a_speed_pad_is_under_a_bike_only_over_it() {
+        let demo = &crate::testing::DEMO[0].layout;
+        let layout = Layout {
+            control_points: demo.control_points,
+            elevation: demo.elevation,
+            banking: demo.banking,
+            branches: &[],
+            narrows: &[],
+            pads: Vec::leak(vec![SpeedPad {
+                along: 100.0,
+                lateral: 3.0,
+            }]),
+            tubes: &[],
+            wall: demo.wall,
+        };
+        let track = Track::new(&layout);
+        let at = |along: f32, lateral: f32| {
+            let index = track.index_at(along);
+            let point = track.offset_point(index, lateral);
+            track.pad_beside(&track.nearest_at(point, track.road_height(point)))
+        };
+        assert!(at(105.0, 3.0));
+        assert!(at(101.0, 4.5) && at(108.0, 1.5));
+        // Past its ends, beside it, or across the road: none.
+        assert!(!at(95.0, 3.0) && !at(115.0, 3.0));
+        assert!(!at(105.0, 6.0) && !at(105.0, -3.0));
     }
 }

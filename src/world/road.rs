@@ -214,6 +214,83 @@ fn tube_meshes(road: Road, glazed: impl Fn(usize) -> bool) -> (Mesh, Mesh) {
     (glass.build(), hoops.build())
 }
 
+/// A speed pad (see [`crate::track::SpeedPad`]): its dark plate, a little
+/// over the road's paint, and the chevrons of light on it pointing the way
+/// of the race, how many, how long along the road each arm reaches, and how
+/// thick.
+const PAD_PLATE: Color = Color::srgb(0.05, 0.06, 0.07);
+const PAD_LIGHT: Color = Color::srgb(0.45, 1.0, 0.3);
+const PAD_LIFT: f32 = 3.0 * PAINT_LIFT;
+const PAD_CHEVRONS: usize = 3;
+const PAD_POINT: f32 = 1.6;
+const PAD_STROKE: f32 = 0.7;
+
+/// The plates of `track`'s speed pads, and their chevrons of light.
+fn pad_meshes(track: &Track) -> (Mesh, Mesh) {
+    use crate::track::{PAD_LENGTH, PAD_WIDTH};
+    let (mut plates, mut chevrons) = (MeshBuilder::default(), MeshBuilder::default());
+    let step = track.step_length();
+    // A point of the road's surface `along` metres from the line and
+    // `lateral` to the left of its centre line, a little over it.
+    let at = |along: f32, lateral: f32, lift: f32| {
+        let along = along.rem_euclid(track.lap_length());
+        let i = (along / step).floor() as usize;
+        let t = along / step - i as f32;
+        track
+            .surface_point(i, lateral)
+            .lerp(track.surface_point(i + 1, lateral), t)
+            + Vec3::Y * (SURFACE_Y + lift)
+    };
+    let half = PAD_WIDTH / 2.0;
+    for pad in track.pads() {
+        let quad = |mesh: &mut MeshBuilder, corners: [(f32, f32); 4], lift: f32| {
+            mesh.quad(
+                corners.map(|(along, lateral)| {
+                    (
+                        at(pad.along + along, pad.lateral + lateral, lift),
+                        Vec2::ZERO,
+                    )
+                }),
+                Vec3::Y,
+                Color::WHITE,
+            );
+        };
+        // The plate, in pieces as long as the road's, so it follows it.
+        let pieces = (PAD_LENGTH / step).ceil() as usize;
+        for k in 0..pieces {
+            let (a, b) = (
+                PAD_LENGTH * k as f32 / pieces as f32,
+                PAD_LENGTH * (k + 1) as f32 / pieces as f32,
+            );
+            quad(
+                &mut plates,
+                [(a, -half), (b, -half), (b, half), (a, half)],
+                PAD_LIFT,
+            );
+        }
+        // The chevrons: each two arms from the plate's edges forward to
+        // its middle.
+        let room = PAD_LENGTH / PAD_CHEVRONS as f32;
+        for c in 0..PAD_CHEVRONS {
+            let back = room * c as f32 + (room - PAD_POINT - PAD_STROKE) / 2.0;
+            let edge = half - 0.3;
+            for side in [-1.0, 1.0] {
+                quad(
+                    &mut chevrons,
+                    [
+                        (back, side * edge),
+                        (back + PAD_POINT, 0.0),
+                        (back + PAD_POINT + PAD_STROKE, 0.0),
+                        (back + PAD_STROKE, side * edge),
+                    ],
+                    PAD_LIFT + PAINT_LIFT,
+                );
+            }
+        }
+    }
+    (plates.build(), chevrons.build())
+}
+
 /// The material of a strip of light of `color`: lit of its own.
 fn light_strip(color: Color) -> StandardMaterial {
     StandardMaterial {
@@ -660,6 +737,20 @@ fn spawn_surface(
                 ..default()
             },
         );
+    }
+
+    // The speed pads let into the lap.
+    if road.number == 0 && !road.track.pads().is_empty() {
+        let (plates, chevrons) = pad_meshes(road.track);
+        spawn(
+            plates,
+            StandardMaterial {
+                base_color: PAD_PLATE,
+                perceptual_roughness: 0.4,
+                ..default()
+            },
+        );
+        spawn(chevrons, light_strip(PAD_LIGHT));
     }
 
     // A tube of glass round the lap where it is curled up into one, and

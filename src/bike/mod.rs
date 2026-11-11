@@ -171,6 +171,8 @@ const BOOST_PER_CHARGE: f32 = 0.5;
 /// What a boost adds while it lasts: this much drive (m/s²), and this
 /// share of the top speed.
 const BOOST_ACCEL: f32 = 14.0;
+/// How long the boost a speed pad gives lasts after it (s).
+const PAD_BOOST: f32 = 0.9;
 const BOOST_TOP_SPEED: f32 = 0.1;
 
 pub struct BikePlugin;
@@ -548,6 +550,9 @@ pub struct Ground {
     /// How much harder than usual the road grips across (see
     /// [`crate::track::Track::grip_beside`]): 1 as usual.
     pub grip: f32,
+    /// Whether a speed pad is under the bike (see
+    /// [`crate::track::SpeedPad`]).
+    pub pad: bool,
 }
 
 impl Ground {
@@ -559,6 +564,7 @@ impl Ground {
             crest: 0.0,
             booster: 0.0,
             grip: 1.0,
+            pad: false,
         }
     }
 }
@@ -912,6 +918,12 @@ pub fn step(
     } else {
         (0.0, (state.boost - dt).max(0.0))
     };
+    // Over a speed pad, a boost as a drift's, for a while after it.
+    let boost = if ground.pad && state.grounded {
+        boost.max(PAD_BOOST)
+    } else {
+        boost
+    };
 
     // Inclinación según cuánto agarre pide la curva: poco giro, poca
     // inclinación, y del todo solo al apurar. (La de equilibrio frente a la
@@ -1102,6 +1114,7 @@ pub fn advance_hitting_walls(
         crest: track.crest(&nearest),
         booster: track.booster_beside(&nearest),
         grip: track.grip_beside(&nearest),
+        pad: track.pad_beside(&nearest),
     };
     let mut next = step(state, input, &ground, tuning, dt);
     // Over the top of a tube, it comes down the other side.
@@ -4067,6 +4080,36 @@ pub mod tests {
             step(&state, &drifting, &flat, &BikeTuning::default(), DT)
         });
         assert_eq!((wheels.charge, wheels.boost), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_speed_pad_boosts_a_bike_that_rides_over_it_for_a_while() {
+        let tuning = BikeTuning::default();
+        let pad = Ground {
+            pad: true,
+            ..Ground::flat(Surface::Asphalt)
+        };
+        let flat = Ground::flat(Surface::Asphalt);
+        let level = BikeState {
+            speed: tuning.max_speed,
+            ..parked()
+        };
+        // Over it, boosted, and a while after.
+        let over = step(&level, &full_throttle(), &pad, &tuning, DT);
+        assert!((over.boost - PAD_BOOST).abs() < 1e-6);
+        let after = (0..60).fold(over, |state, _| {
+            step(&state, &full_throttle(), &flat, &tuning, DT)
+        });
+        assert!(after.boost > 0.0 && after.speed > level.speed + 1.0);
+        // In the air it does nothing.
+        let flying = BikeState {
+            grounded: false,
+            ..level
+        };
+        assert_eq!(
+            step(&flying, &full_throttle(), &pad, &tuning, DT).boost,
+            0.0
+        );
     }
 
     #[test]
