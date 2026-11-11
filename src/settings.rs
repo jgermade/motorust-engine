@@ -233,6 +233,20 @@ impl Difficulty {
     }
 }
 
+impl Difficulty {
+    /// How much harder a knock (rubbing against another bike, or going into
+    /// a wall) has to be to bring a player down than it has on very hard:
+    /// the easier the race, the more of a knock is ridden out.
+    pub fn fall_tolerance(self) -> f32 {
+        match self {
+            Difficulty::Easy => 2.0,
+            Difficulty::Medium => 1.6,
+            Difficulty::Hard => 1.3,
+            Difficulty::VeryHard => 1.0,
+        }
+    }
+}
+
 /// How much more a rival dares on very hard than on medium.
 const VERY_HARD: f32 = 0.12;
 

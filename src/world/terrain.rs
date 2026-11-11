@@ -1226,6 +1226,10 @@ impl Terrain {
         }];
         let [r, g, b, a] = color;
         let color = [r * paint.x, g * paint.y, b * paint.z, a];
+        let color = match ground {
+            Ground::Rock => rock_stratum(color, p, slope),
+            _ => color,
+        };
         let side = match ground {
             // Earth under the grass.
             Ground::Grass => VOXEL_EARTH,
@@ -2242,7 +2246,50 @@ fn voxel_quad(builder: &mut Builder, corners: [Vec3; 4], normal: Vec3, colors: [
 const VOXEL_FOOT: f32 = 0.5;
 
 /// A number from 0 to 1 for a block, the same for it every time.
-fn hash01(cube: IVec3) -> f32 {
+/// The hues of the rock drawn as voxels (see [`rock_stratum`]), each as
+/// light as the rest: greys warm and cool, ochre, orange, a red sandstone, a
+/// pale limestone, and the green of moss and scrub on its ledges.
+const ROCK_HUES: [[f32; 3]; 6] = [
+    [0.94, 0.98, 1.1],
+    [1.04, 1.0, 0.94],
+    [1.3, 1.0, 0.58],
+    [1.42, 0.88, 0.52],
+    [1.3, 0.82, 0.68],
+    [1.08, 1.04, 0.86],
+];
+const ROCK_MOSS: [f32; 3] = [0.82, 1.14, 0.66];
+/// How thick the rock's layers are (m), how far they wander up and down
+/// (m), and over how wide a patch one hue holds (m).
+const ROCK_LAYER: f32 = 2.5;
+const ROCK_WANDER: f32 = 3.0;
+const ROCK_PATCH: f32 = 90.0;
+/// How nearly level a ledge of rock is for moss to grow on it (the up part
+/// of its normal), and over how much of them.
+const MOSS_LEVEL: f32 = 0.8;
+const MOSS_SHARE: f32 = 0.45;
+
+/// `color`, the rock at `p` as painted (brown, as the rock's texture is),
+/// in the hue of the layer it is in: the rock in layers, each a few metres
+/// thick and wandering up and down, one hue each, and the hues changing from
+/// one stretch of a cliff to the next, as layered rock shows its strata; as
+/// light as it was, so it is shaded as before. Its level ledges green in
+/// places, moss and scrub on them.
+pub(super) fn rock_stratum(color: [f32; 4], p: Vec3, slope: Vec3) -> [f32; 4] {
+    let [r, g, b, a] = color;
+    let light = 0.3 * r + 0.59 * g + 0.11 * b;
+    let at = Vec2::new(p.x, p.z);
+    let patch = fbm(at / ROCK_PATCH, 2);
+    let hue = if slope.y > MOSS_LEVEL && fbm(at / 25.0 + 17.0, 2) < MOSS_SHARE {
+        ROCK_MOSS
+    } else {
+        let layer = ((p.y + ROCK_WANDER * fbm(at / 40.0 + 5.0, 2)) / ROCK_LAYER).floor() as i32;
+        let shift = (patch * 4.0).floor() as i32;
+        ROCK_HUES[(layer * 5 + shift * 3).rem_euclid(ROCK_HUES.len() as i32) as usize]
+    };
+    [light * hue[0], light * hue[1], light * hue[2], a]
+}
+
+pub(super) fn hash01(cube: IVec3) -> f32 {
     let mut h = (cube.x as u32).wrapping_mul(1_664_525)
         ^ (cube.y as u32).wrapping_mul(22_695_477)
         ^ (cube.z as u32).wrapping_mul(2_891_336_453);

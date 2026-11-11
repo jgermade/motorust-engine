@@ -1197,6 +1197,19 @@ fn build(
     }
     let shore_image = builder.images.add(shore_image);
     let scenery = &basis.circuit.scenery;
+    let neon_grid = (scenery.sky == scenery::SkyStyle::Synthwave
+        && scenery.water == scenery::Water::Sea)
+        .then(|| {
+            (
+                builder.meshes.add(sea::grid_mesh(basis.track.centerline())),
+                builder.materials.add(StandardMaterial {
+                    base_color: sea::GRID_GLOW,
+                    alpha_mode: AlphaMode::Add,
+                    unlit: true,
+                    ..default()
+                }),
+            )
+        });
     let cartoon_sea = builder
         .sea_materials
         .add(basis.shore.material(shore_image, scenery.water));
@@ -1331,6 +1344,15 @@ fn build(
             // Earth's.
             if split {
                 sea.insert(realm::Realm::Earth.layers());
+            }
+            // Under a sunset of the 80s, a light neon grid on the sea.
+            if let Some(grid) = &neon_grid {
+                world.spawn((
+                    Mesh3d(grid.0.clone()),
+                    MeshMaterial3d(grid.1.clone()),
+                    Transform::from_xyz(0.0, terrain::SEA_LEVEL, 0.0),
+                    bevy::light::NotShadowCaster,
+                ));
             }
         })
         .id();
