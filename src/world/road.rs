@@ -2397,4 +2397,46 @@ pub mod tests {
             radius: 7.5,
         };
     }
+
+    #[test]
+    fn a_speed_pad_lies_on_the_road_where_it_is_with_its_chevrons_on_it() {
+        use crate::track::{Layout, PAD_LENGTH, PAD_WIDTH, SpeedPad};
+        let demo = &crate::testing::DEMO[0].layout;
+        let pad = SpeedPad {
+            along: 100.0,
+            lateral: 3.0,
+        };
+        let layout = Layout {
+            control_points: demo.control_points,
+            elevation: demo.elevation,
+            banking: demo.banking,
+            branches: &[],
+            narrows: &[],
+            pads: Vec::leak(vec![pad]),
+            tubes: &[],
+            wall: demo.wall,
+        };
+        let track = Track::new(&layout);
+        let (plates, chevrons) = pad_meshes(&track);
+        for (mesh, least) in [(&plates, 4), (&chevrons, 4 * 2 * PAD_CHEVRONS)] {
+            let positions = mesh
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .and_then(|positions| positions.as_float3())
+                .expect("it has points");
+            assert!(positions.len() >= least, "{}", positions.len());
+            for &p in positions {
+                let point = Vec2::new(p[0], p[2]);
+                let nearest = track.nearest_at(point, p[1]);
+                let along = track.along(&nearest);
+                // On the pad's stretch and lane, just over the road.
+                assert!(
+                    (pad.along - 0.1..=pad.along + PAD_LENGTH + 0.1).contains(&along),
+                    "{along}"
+                );
+                assert!((nearest.lateral - pad.lateral).abs() <= PAD_WIDTH / 2.0 + 0.05);
+                let over = p[1] - (track.height_beside(&nearest) + SURFACE_Y);
+                assert!((0.0..0.1).contains(&over), "{over}");
+            }
+        }
+    }
 }
