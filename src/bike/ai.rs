@@ -512,8 +512,18 @@ pub fn decide(
         brake: ((speed - target_speed - 1.0) / 3.0).clamp(0.0, 1.0),
         steer,
         steer_direct: 0.0,
-        // Los rivales no hacen caballitos: van a por el tiempo.
+        // Los rivales no hacen caballitos: van a por el tiempo. Nor do they
+        // drift; the nitro they get (on the stretches that fill it) they
+        // burn on a straight, flat out, with plenty of road ahead.
         wheelie: 0.0,
+        nitro: if state.nitro > RIVAL_NITRO
+            && steer.abs() < RIVAL_NITRO_STEER
+            && target_speed >= tuning.max_speed * rival.skill.min(1.0) - 0.5
+        {
+            1.0
+        } else {
+            0.0
+        },
         pivot_slowing: 0.0,
         lean: None,
         // Its steering does not reckon with the front's extra grip braking.
@@ -521,6 +531,11 @@ pub fn decide(
         look: super::curves::LeanLook::Real,
     }
 }
+
+/// How much nitro a rival waits to have before it burns it, and how little
+/// it may be steering then (a straight).
+const RIVAL_NITRO: f32 = 0.3;
+const RIVAL_NITRO_STEER: f32 = 0.1;
 
 /// How a rival riding round a loop as `ride` says at `speed` steers to get
 /// to its `line` (m to the left of the middle of the running surface, as on

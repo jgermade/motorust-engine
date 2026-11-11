@@ -86,21 +86,21 @@ pub enum PlateDesign {
     /// A blue-grey road in lanes: a pale line either side of the middle
     /// one, dashes of amber down it.
     Lanes,
-    /// A black road with bars of light across its middle, in the circuit's
-    /// second curb colour.
+    /// A black road with bars of light across it, in the circuit's second
+    /// curb colour: where it fills the nitro (see
+    /// [`crate::track::Recharge`]), and only there.
     Bars,
 }
 
 /// How long a stretch of one design is (m), and the designs in the order
 /// they come round the lap: never two alike in a row, dark after light.
 const DESIGN_LENGTH: f32 = 220.0;
-const DESIGNS: [PlateDesign; 8] = [
+const DESIGNS: [PlateDesign; 7] = [
     PlateDesign::Panels,
     PlateDesign::Neon,
     PlateDesign::Pale,
     PlateDesign::Hazard,
     PlateDesign::Lanes,
-    PlateDesign::Bars,
     PlateDesign::Pale,
     PlateDesign::Neon,
 ];
@@ -108,10 +108,9 @@ const DESIGNS: [PlateDesign; 8] = [
 /// two shades.
 const CARBON: Color = Color::srgb(0.06, 0.065, 0.08);
 const PALE: [Color; 2] = [Color::srgb(0.82, 0.84, 0.88), Color::srgb(0.72, 0.75, 0.8)];
-/// The bars' and the lanes' lines' place across the road (shares of its
+/// The lanes' lines' place across the road (shares of its
 /// half width), and the chevrons': in how many strips across each half
 /// they are laid, a stripe so many points long of every so many.
-const BARS_ACROSS: f32 = 0.6;
 const LANE_ACROSS: f32 = 0.34;
 const CHEVRON_STRIPS: usize = 6;
 const CHEVRON_EVERY: usize = 8;
@@ -461,17 +460,23 @@ impl<'a> Road<'a> {
         }
     }
 
-    /// Whether `point` is on the asphalt (or the curbs) of another road.
-    fn on_other_asphalt(&self, point: Vec2) -> bool {
-        self.track.on_other_road(self.number, point, |road, _| {
-            road.half_width() + CURB_WIDTH - 0.1
-        })
+    /// Whether `point`, beside point `index` of this road, is on the
+    /// asphalt (or the curbs) of another road at its level: not one a
+    /// storey over or under it, where one crosses the other.
+    fn on_other_asphalt(&self, point: Vec2, index: usize) -> bool {
+        let height = self.surface_point(index, 0.0).y;
+        self.track
+            .on_other_road_at(self.number, point, height, |road, _| {
+                road.half_width() + CURB_WIDTH - 0.1
+            })
     }
 
-    /// Whether `point` is between the walls of another road.
-    fn between_other_walls(&self, point: Vec2) -> bool {
+    /// Whether `point`, beside point `index` of this road, is between the
+    /// walls of another road at its level.
+    fn between_other_walls(&self, point: Vec2, index: usize) -> bool {
+        let height = self.surface_point(index, 0.0).y;
         self.track
-            .on_other_road(self.number, point, |road, nearest| {
+            .on_other_road_at(self.number, point, height, |road, nearest| {
                 road.wall_at(nearest.index) - 0.3
             })
     }
@@ -566,15 +571,17 @@ fn spawn_surface(
             })
     };
     // The asphalt, except where it lies under the lap's.
-    let covered = |corners: [Vec2; 4]| corners.iter().all(|&p| road.on_other_asphalt(p));
+    let covered =
+        |index: usize, corners: [Vec2; 4]| corners.iter().all(|&p| road.on_other_asphalt(p, index));
     let indoors = scenery.soil == Soil::Floor;
     let arcade = scenery.look.voxel_size().is_some() && !indoors;
     let plated = scenery.paving == Paving::Plates && !indoors;
     if indoors {
         spawn_toy_tracks(spawn, road, scenery, textures);
     } else if plated {
-        let shown =
-            |index: usize, corners| (road.number == 0 || !covered(corners)) && !planked(index);
+        let shown = |index: usize, corners| {
+            (road.number == 0 || !covered(index, corners)) && !planked(index)
+        };
         let plates = || StandardMaterial {
             perceptual_roughness: 0.55,
             reflectance: 0.5,
@@ -582,7 +589,19 @@ fn spawn_surface(
         };
         // Stretch after stretch of the road its own design (see
         // [`plate_design`]). The plates under them all:
-        let design = |index: usize| plate_design(index as f32 * line.step_length());
+        // Where it fills the nitro, its bars, whatever the design there.
+        let recharges = |index: usize| {
+            let along = line.lap_along_at(index);
+            let lap = road.track.lap_length();
+            road.track.recharges().iter().any(|recharge| {
+                (along - recharge.from).rem_euclid(lap)
+                    < (recharge.to - recharge.from).rem_euclid(lap)
+            })
+        };
+        let design = |index: usize| match recharges(index) {
+            true => PlateDesign::Bars,
+            false => plate_design(index as f32 * line.step_length()),
+        };
         let is = |index: usize, corners, wanted: PlateDesign| {
             shown(index, corners) && design(index) == wanted
         };
@@ -657,7 +676,7 @@ fn spawn_surface(
         }
         // Bars: bars of light across the middle of a black road, in the
         // circuit's second curb colour.
-        let bars = BARS_ACROSS * half;
+        let bars = half - EDGE_LINE_INSET;
         spawn(
             ribbon(road, -bars, bars, PAINT_LIFT, 1.0, |index, corners| {
                 (is(index, corners, PlateDesign::Bars) && index % 4 == 0).then_some(Color::WHITE)
@@ -716,7 +735,7 @@ fn spawn_surface(
         // Flat, in bands of two greys.
         spawn(
             ribbon(road, -half, half, 0.0, ASPHALT_TILE, |index, corners| {
-                ((road.number == 0 || !covered(corners)) && !planked(index))
+                ((road.number == 0 || !covered(index, corners)) && !planked(index))
                     .then(|| ARCADE_ASPHALT[arcade_band(index as f32 * line.step_length())])
             }),
             StandardMaterial {
@@ -728,7 +747,8 @@ fn spawn_surface(
     } else {
         spawn(
             ribbon(road, -half, half, 0.0, ASPHALT_TILE, |index, corners| {
-                ((road.number == 0 || !covered(corners)) && !planked(index)).then_some(Color::WHITE)
+                ((road.number == 0 || !covered(index, corners)) && !planked(index))
+                    .then_some(Color::WHITE)
             }),
             StandardMaterial {
                 base_color_texture: Some(textures.asphalt.clone()),
@@ -789,12 +809,12 @@ fn spawn_surface(
         perceptual_roughness: 0.7,
         ..default()
     };
-    let clear = |corners: [Vec2; 4]| {
+    let clear = |index: usize, corners: [Vec2; 4]| {
         let middle = corners.iter().sum::<Vec2>() / 4.0;
-        !road.on_other_asphalt(middle)
+        !road.on_other_asphalt(middle, index)
     };
     let white = |index, corners| {
-        (clear(corners) && !planked(index) && !indoors && !plated).then_some(Color::WHITE)
+        (clear(index, corners) && !planked(index) && !indoors && !plated).then_some(Color::WHITE)
     };
     let edge = half - EDGE_LINE_INSET;
     spawn(
@@ -807,7 +827,7 @@ fn spawn_surface(
     );
     let dashes = |index: usize, corners| {
         (index % (DASH.0 + DASH.1) < DASH.0
-            && clear(corners)
+            && clear(index, corners)
             && !planked(index)
             && !indoors
             && !plated)
@@ -827,7 +847,7 @@ fn spawn_surface(
             false => index % 2,
         };
         ((arcade || has_curbs(road, index))
-            && clear(corners)
+            && clear(index, corners)
             && !planked(index)
             && toy.is_none_or(|style| style == BridgeStyle::SlotTrack))
         .then_some(scenery.curbs[stripe])
@@ -1757,7 +1777,7 @@ fn at_a_junction(road: Road, index: usize, side: Side) -> bool {
     let middle = (line.offset_point(index, inner(index))
         + line.offset_point(index + 1, inner(index + 1)))
         / 2.0;
-    road.between_other_walls(middle)
+    road.between_other_walls(middle, index)
 }
 
 fn railing(road: Road, color: Color, wanted: impl Fn(usize, Side) -> bool) -> Option<Mesh> {
@@ -1776,7 +1796,7 @@ fn railing(road: Road, color: Color, wanted: impl Fn(usize, Side) -> bool) -> Op
         let over = |index: usize| {
             let index = index % line.sample_count();
             let post = line.offset_point(index, side.sign() * (line.wall_at(index) + 0.2));
-            road.between_other_walls(post)
+            road.between_other_walls(post, index)
         };
         let shows = |index: usize| {
             wanted(index, side)
@@ -2287,7 +2307,7 @@ pub mod tests {
         for &[x, _, z] in positions {
             let point = Vec2::new(x, z);
             assert!(
-                !road.between_other_walls(point),
+                !road.between_other_walls(point, road.line().nearest_index(point)),
                 "a railing at {point:?} stands on another road"
             );
         }
@@ -2375,10 +2395,11 @@ pub mod tests {
             PlateDesign::Neon,
             PlateDesign::Pale,
             PlateDesign::Lanes,
-            PlateDesign::Bars,
         ] {
             assert!((0..16).any(|k| plate_design(k as f32 * DESIGN_LENGTH) == design));
         }
+        // The bars of light are where the nitro fills, never a design.
+        assert!((0..64).all(|k| plate_design(k as f32 * 37.0) != PlateDesign::Bars));
     }
 
     #[test]
@@ -2412,6 +2433,7 @@ pub mod tests {
             banking: demo.banking,
             branches: &[],
             narrows: &[],
+            recharges: &[],
             pads: Vec::leak(vec![pad]),
             tubes: &[],
             wall: demo.wall,

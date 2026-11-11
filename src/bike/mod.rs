@@ -159,21 +159,28 @@ const DRIFT_SPARES: f32 = 0.7;
 /// and what sliding costs it instead (m/s²): a drift pays in a tight bend,
 /// not in a gentle one.
 const DRIFT_DRAG: f32 = 5.0;
-/// A drift charges a boost, as a kart's does: the time spent sliding well
-/// (over [`DRIFT_CHARGING`] of all it can) adds up, to [`DRIFT_CHARGE`]
-/// seconds at most, and let go after [`DRIFT_CHARGED`] seconds or more it
-/// gives [`BOOST_PER_CHARGE`] seconds of boost for each; let go sooner, or
-/// lost in the air, it gives none.
+/// A drift charges the nitro: the time spent sliding well (over
+/// [`DRIFT_CHARGING`] of all it can) adds up, to [`DRIFT_CHARGE`] seconds
+/// at most, and let go after [`DRIFT_CHARGED`] seconds or more it fills
+/// [`NITRO_PER_CHARGE`] of the tank for each; let go sooner, or lost in the
+/// air, it gives none.
 const DRIFT_CHARGING: f32 = 0.6;
 pub const DRIFT_CHARGE: f32 = 3.0;
 pub const DRIFT_CHARGED: f32 = 0.6;
-const BOOST_PER_CHARGE: f32 = 0.5;
 /// What a boost adds while it lasts: this much drive (m/s²), and this
 /// share of the top speed.
 const BOOST_ACCEL: f32 = 14.0;
+/// The nitro: how much of a tank a drift charged a second gives (see
+/// [`DRIFT_CHARGE`]), how much a second on a stretch that fills it, how much
+/// a second of burning takes (a full tank lasts 1/[`NITRO_BURN`] s), and how
+/// long its boost lasts once let go (s).
+const NITRO_PER_CHARGE: f32 = 0.12;
+const RECHARGE_RATE: f32 = 0.35;
+const NITRO_BURN: f32 = 0.25;
+const NITRO_TAIL: f32 = 0.15;
 /// How long the boost a speed pad gives lasts after it (s).
 const PAD_BOOST: f32 = 0.9;
-const BOOST_TOP_SPEED: f32 = 0.1;
+const BOOST_TOP_SPEED: f32 = 0.11;
 
 pub struct BikePlugin;
 
@@ -382,6 +389,8 @@ pub struct BikeInput {
     pub steer_direct: f32,
     /// Cuánto tira del manillar para hacer el caballito, de 0 a 1.
     pub wheelie: f32,
+    /// Where the bikes hover, how hard the nitro is pressed (0 to 1).
+    pub nitro: f32,
     /// How much slower than usual the bike and the rider go over to the
     /// other side when the turn changes sides (0, as always, to 1): from
     /// the keyboard or the d-pad, as Options > Control says (see
@@ -464,6 +473,10 @@ pub struct BikeState {
     /// still lasts (s).
     pub charge: f32,
     pub boost: f32,
+    /// How much nitro a hover bike has (0 to 1, a full tank): filled by its
+    /// drifts and on the stretches that fill it, burnt while the nitro is
+    /// pressed, driving it on as a boost does.
+    pub nitro: f32,
 }
 
 impl BikeState {
@@ -491,6 +504,7 @@ impl BikeState {
             drift: 0.0,
             charge: 0.0,
             boost: 0.0,
+            nitro: 0.0,
         }
     }
 
@@ -553,6 +567,9 @@ pub struct Ground {
     /// Whether a speed pad is under the bike (see
     /// [`crate::track::SpeedPad`]).
     pub pad: bool,
+    /// Whether it is on a stretch that fills the nitro (see
+    /// [`crate::track::Recharge`]).
+    pub recharge: bool,
 }
 
 impl Ground {
@@ -565,6 +582,7 @@ impl Ground {
             booster: 0.0,
             grip: 1.0,
             pad: false,
+            recharge: false,
         }
     }
 }
@@ -658,7 +676,7 @@ impl BikeTuning {
         Self {
             hover: true,
             max_speed: HOVER_TOP_SPEED,
-            engine_accel: 26.0,
+            engine_accel: 40.0,
             max_lateral_accel: 65.0 * (HOVER_TOP_SPEED / 80.0).powi(2) * 0.8,
             ..default()
         }
@@ -701,9 +719,9 @@ const TUBE_UPRIGHT: f32 = 0.05;
 /// was taken round a tube's top.
 const ROUND_THE_TUBE: f32 = 6.0;
 
-/// How fast a bike that hovers goes flat out (m/s, 360 km/h: the top of
-/// the speedometer's dial).
-pub const HOVER_TOP_SPEED: f32 = 100.0;
+/// How fast a bike that hovers goes flat out (m/s, 540 km/h), and with a
+/// boost or the nitro some 600 km/h (see [`BOOST_TOP_SPEED`]).
+pub const HOVER_TOP_SPEED: f32 = 150.0;
 
 /// The bikes change gears as Options > Game says.
 fn follow_gears(settings: Res<Settings>, mut tuning: ResMut<BikeTuning>) {
@@ -913,10 +931,30 @@ pub fn step(
             (state.charge + charging).min(DRIFT_CHARGE),
             (state.boost - dt).max(0.0),
         )
-    } else if state.charge >= DRIFT_CHARGED && state.grounded {
-        (0.0, state.boost.max(BOOST_PER_CHARGE * state.charge))
     } else {
         (0.0, (state.boost - dt).max(0.0))
+    };
+    // A drift let go once charged fills the nitro by as long as it was;
+    // a stretch that fills it, as the bike rides it; the nitro pressed
+    // burns it, driving the bike on as a boost does while there is any.
+    let mut nitro = state.nitro;
+    if tuning.hover {
+        if !held && state.charge >= DRIFT_CHARGED && state.grounded {
+            nitro += NITRO_PER_CHARGE * state.charge;
+        }
+        if ground.recharge && state.grounded {
+            nitro += RECHARGE_RATE * dt;
+        }
+    }
+    let burning = tuning.hover && input.nitro > 0.5 && state.nitro > 0.0 && state.grounded;
+    if burning {
+        nitro -= NITRO_BURN * dt;
+    }
+    let nitro = nitro.clamp(0.0, 1.0);
+    let boost = if burning {
+        boost.max(NITRO_TAIL)
+    } else {
+        boost
     };
     // Over a speed pad, a boost as a drift's, for a while after it.
     let boost = if ground.pad && state.grounded {
@@ -1024,6 +1062,7 @@ pub fn step(
         drift,
         charge,
         boost,
+        nitro,
         pitch: approach(state.pitch, target_pitch, PITCH_RESPONSE, dt),
         accel,
         chassis,
@@ -1115,6 +1154,7 @@ pub fn advance_hitting_walls(
         booster: track.booster_beside(&nearest),
         grip: track.grip_beside(&nearest),
         pad: track.pad_beside(&nearest),
+        recharge: track.recharge_beside(&nearest),
     };
     let mut next = step(state, input, &ground, tuning, dt);
     // Over the top of a tube, it comes down the other side.
@@ -1631,6 +1671,11 @@ fn read_controller_binding(
             } else {
                 0.0
             };
+            let nitro = if keyboard.pressed(KeyCode::KeyE) {
+                1.0
+            } else {
+                0.0
+            };
             let keys = digital.update(left - right, speed, dt, options, curves.keys());
             BikeInput {
                 throttle,
@@ -1638,6 +1683,7 @@ fn read_controller_binding(
                 steer: 0.0,
                 steer_direct: keys.steer,
                 wheelie,
+                nitro,
                 pivot_slowing: keys.pivot_slowing,
                 lean: keys.lean,
                 // The front's extra grip braking is the curves' handling's.
@@ -1676,6 +1722,11 @@ fn read_controller_binding(
             } else {
                 0.0
             };
+            let nitro = if keyboard.any_pressed([KeyCode::KeyK, KeyCode::Numpad1]) {
+                1.0
+            } else {
+                0.0
+            };
             let keys = digital.update(left - right, speed, dt, options, curves.keys());
             BikeInput {
                 throttle,
@@ -1683,6 +1734,7 @@ fn read_controller_binding(
                 steer: 0.0,
                 steer_direct: keys.steer,
                 wheelie,
+                nitro,
                 pivot_slowing: keys.pivot_slowing,
                 lean: keys.lean,
                 // The front's extra grip braking is the curves' handling's.
@@ -1704,8 +1756,10 @@ fn read_controller_binding(
                 } else {
                     0.0
                 };
-                let throttle = arming.filter(entity, THROTTLE, squeezed(trigger_r.max(south)));
-                let brake = arming.filter(entity, BRAKE, squeezed(trigger_l.max(west)));
+                // The triggers to go and to brake; X (square) the wheelie
+                // or the drift, B (circle) too; A (cross) the nitro.
+                let throttle = arming.filter(entity, THROTTLE, squeezed(trigger_r));
+                let brake = arming.filter(entity, BRAKE, squeezed(trigger_l));
 
                 let stick = gamepad.get(GamepadAxis::LeftStickX).unwrap_or(0.0);
                 let classic = -stick_steer(stick, options.stick_curve);
@@ -1731,14 +1785,14 @@ fn read_controller_binding(
                 let keys =
                     digital.update(dpad_left - dpad_right, speed, dt, options, curves.keys());
 
-                // B, or the trigger and A at once. Not the stick pulled back:
-                // steering, it is easy to pull it a little without meaning to.
-                let wheelie =
-                    if gamepad.pressed(GamepadButton::East) || (trigger_r > 0.2 && south > 0.5) {
-                        1.0
-                    } else {
-                        0.0
-                    };
+                // X or B. Not the stick pulled back: steering, it is easy to
+                // pull it a little without meaning to.
+                let wheelie = if west > 0.5 || gamepad.pressed(GamepadButton::East) {
+                    1.0
+                } else {
+                    0.0
+                };
+                let nitro = south;
 
                 BikeInput {
                     throttle,
@@ -1746,6 +1800,7 @@ fn read_controller_binding(
                     steer: stick.steer.clamp(-1.0, 1.0),
                     steer_direct: (keys.steer + stick.direct).clamp(-1.0, 1.0),
                     wheelie,
+                    nitro,
                     pivot_slowing: keys.pivot_slowing,
                     lean: keys.lean.or(stick.lean),
                     plain_grip: keys.lean.is_none() && stick.lean.is_none(),
@@ -1851,6 +1906,7 @@ fn read_player_input(
         // How far the sticks are pushed past their dead zone, to the left.
         let mut travel = 0.0;
         let mut wheelie = key(Action::Wheelie);
+        let mut nitro = key(Action::Nitro);
 
         let mut active_pad_entity: Option<Entity> = None;
         // What is pressing the throttle, to tell in the log what starts the race.
@@ -1880,8 +1936,12 @@ fn read_player_input(
                 0.0
             };
             // Not the stick pulled back: steering, it is easy to pull it a
-            // little without meaning to.
+            // little without meaning to. The trigger and A at once too,
+            // where A is not the nitro.
+            let a_is_nitro = controls.action_of(GamepadButton::South) == Some(Action::Nitro);
+            let both_throttles = if a_is_nitro { 0.0 } else { both_throttles };
             let p_wheelie = both_throttles.max(button(Action::Wheelie));
+            let p_nitro = button(Action::Nitro);
 
             let has_activity = p_throttle > 0.05
                 || p_brake > 0.05
@@ -1907,6 +1967,7 @@ fn read_player_input(
             steer -= p_steer;
             pressed += p_pressed;
             wheelie = wheelie.max(p_wheelie);
+            nitro = nitro.max(p_nitro);
         }
 
         if let Some(ac) = active_controller.as_mut() {
@@ -1928,6 +1989,7 @@ fn read_player_input(
             steer: stick.steer.clamp(-1.0, 1.0),
             steer_direct: (keys.steer + stick.direct).clamp(-1.0, 1.0),
             wheelie,
+            nitro,
             pivot_slowing: keys.pivot_slowing,
             lean: keys.lean.or(stick.lean),
             // The front's extra grip braking is the curves' handling's: in
@@ -4019,7 +4081,7 @@ pub mod tests {
     }
 
     #[test]
-    fn a_drift_held_charges_a_boost_given_when_it_is_let_go() {
+    fn a_drift_held_fills_the_nitro_when_it_is_let_go_and_the_nitro_drives_the_bike_on() {
         let flat = Ground::flat(Surface::Asphalt);
         let tuning = hovering();
         let ride = |input: BikeInput, state: BikeState, seconds: f32| {
@@ -4036,20 +4098,53 @@ pub mod tests {
             wheelie: 1.0,
             ..default()
         };
-        // A short drift charges nothing worth a boost; a long one more,
+        // A short drift charges nothing worth the nitro; a long one more,
         // up to its most.
         let short = ride(drifting, fast, 0.5);
         assert!(short.charge < DRIFT_CHARGED && short.boost == 0.0);
         let long = ride(drifting, fast, 2.0);
         assert!(long.charge > 1.4 && long.charge < 2.0, "{}", long.charge);
         assert_eq!(ride(drifting, fast, 6.0).charge, DRIFT_CHARGE);
-        // Let go, the charge becomes a boost, longer for the longer drift.
+        // Let go, the charge fills the nitro, more for the longer drift; no
+        // boost of its own.
         let let_go = |state: BikeState| step(&state, &full_throttle(), &flat, &tuning, DT);
-        assert_eq!(let_go(short).boost, 0.0);
-        let boosted = let_go(long);
-        assert_eq!(boosted.charge, 0.0);
-        assert!((boosted.boost - BOOST_PER_CHARGE * long.charge).abs() < 1e-4);
-        assert!(let_go(ride(drifting, fast, 6.0)).boost > boosted.boost);
+        assert_eq!(let_go(short).nitro, 0.0);
+        let filled = let_go(long);
+        assert_eq!((filled.charge, filled.boost), (0.0, 0.0));
+        assert!((filled.nitro - NITRO_PER_CHARGE * long.charge).abs() < 1e-4);
+        assert!(let_go(ride(drifting, fast, 6.0)).nitro > filled.nitro);
+        // A stretch that fills it, as the bike rides it.
+        let recharging = Ground {
+            recharge: true,
+            ..flat
+        };
+        let refilled = (0..120).fold(fast, |state, _| {
+            step(&state, &full_throttle(), &recharging, &tuning, DT)
+        });
+        assert!(
+            (refilled.nitro - RECHARGE_RATE).abs() < 0.01,
+            "{}",
+            refilled.nitro
+        );
+        // Pressed, it burns and drives the bike on; empty, it does nothing.
+        let nitro = BikeInput {
+            nitro: 1.0,
+            ..full_throttle()
+        };
+        let burnt = step(&filled, &nitro, &flat, &tuning, DT);
+        assert!(burnt.nitro < filled.nitro && burnt.boost > 0.0);
+        assert_eq!(step(&fast, &nitro, &flat, &tuning, DT).boost, 0.0);
+        // On wheels, none of it.
+        let wheels = (0..120).fold(fast, |state, _| {
+            step(
+                &state,
+                &full_throttle(),
+                &recharging,
+                &BikeTuning::default(),
+                DT,
+            )
+        });
+        assert_eq!(wheels.nitro, 0.0);
         // Boosted, it pulls harder and past its top speed; then it is over.
         let level = BikeState {
             speed: tuning.max_speed,

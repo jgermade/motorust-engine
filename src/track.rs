@@ -40,6 +40,10 @@ pub struct Layout {
     /// bridge.
     #[serde(deserialize_with = "crate::circuits::data::leak", default)]
     pub narrows: &'static [Narrowing],
+    /// Stretches of the lap that fill a hover bike's nitro as it rides
+    /// them (see [`Recharge`]): none if left out.
+    #[serde(deserialize_with = "crate::circuits::data::leak", default)]
+    pub recharges: &'static [Recharge],
     /// Speed pads on the lap (see [`SpeedPad`]): none if left out.
     #[serde(deserialize_with = "crate::circuits::data::leak", default)]
     pub pads: &'static [SpeedPad],
@@ -97,6 +101,16 @@ pub struct SpeedPad {
     pub along: f32,
     #[serde(default)]
     pub lateral: f32,
+}
+
+/// A stretch of the lap, `from` and `to` metres from the finish line, that
+/// fills a hover bike's nitro as it rides it, all across the road (see
+/// `crate::bike::BikeState::nitro`): drawn as bars of light across it.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Recharge {
+    pub from: f32,
+    pub to: f32,
 }
 
 /// How long and how wide a speed pad is (m).
@@ -385,6 +399,8 @@ pub struct Track {
     roll: Vec<f32>,
     /// The speed pads on the lap (see [`SpeedPad`]).
     pads: Vec<SpeedPad>,
+    /// The stretches of the lap that fill the nitro (see [`Recharge`]).
+    recharges: Vec<Recharge>,
     /// On a road off the lap, how far along the lap each of its points
     /// counts as (m from the finish line). Empty on the lap.
     lap_along: Vec<f32>,
@@ -535,6 +551,7 @@ impl Track {
         let mut track = Self::lap(layout);
         track.curl_tubes(layout.tubes);
         track.pads = layout.pads.to_vec();
+        track.recharges = layout.recharges.to_vec();
         for branch in layout.branches {
             track.add_branch(branch);
         }
@@ -730,6 +747,7 @@ impl Track {
             wall: layout.wall,
             roll: Vec::new(),
             pads: Vec::new(),
+            recharges: Vec::new(),
             lap_along: Vec::new(),
             apart: Vec::new(),
             side_roads: Vec::new(),
@@ -998,6 +1016,7 @@ impl Track {
             wall: self.wall,
             roll: Vec::new(),
             pads: Vec::new(),
+            recharges: Vec::new(),
             lap_along: Vec::new(),
             apart: Vec::new(),
             side_roads: Vec::new(),
@@ -1282,6 +1301,33 @@ impl Track {
         &self.pads
     }
 
+    /// How much of its own a road off the lap's surface is at point
+    /// `index` (0 where it lies on the lap's, 1 once apart); 1 on the lap.
+    pub fn apart_at(&self, index: usize) -> f32 {
+        self.apart
+            .get(self.wrap(index as isize))
+            .copied()
+            .unwrap_or(1.0)
+    }
+
+    /// The stretches of the lap that fill the nitro.
+    pub fn recharges(&self) -> &[Recharge] {
+        &self.recharges
+    }
+
+    /// Whether a point already found is on a stretch that fills the nitro:
+    /// on the lap, between its walls, or on a way off it beside one.
+    pub fn recharge_beside(&self, nearest: &Nearest) -> bool {
+        if self.recharges.is_empty() {
+            return false;
+        }
+        let along = self.along(nearest);
+        let lap = self.lap_length();
+        self.recharges.iter().any(|recharge| {
+            (along - recharge.from).rem_euclid(lap) < (recharge.to - recharge.from).rem_euclid(lap)
+        })
+    }
+
     /// Whether a speed pad is under a point already found (on the lap,
     /// within its length and its width).
     pub fn pad_beside(&self, nearest: &Nearest) -> bool {
@@ -1334,6 +1380,25 @@ impl Track {
                 let line = self.road(other);
                 let (nearest, _) = line.search(point, None, other);
                 nearest.is_some_and(|nearest| nearest.distance < within(line, &nearest))
+            })
+    }
+
+    /// Like [`Self::on_other_road`], for a point at `height`: only another
+    /// road at about that level counts, not one passing a storey over or
+    /// under it.
+    pub fn on_other_road_at(
+        &self,
+        road: usize,
+        point: Vec2,
+        height: f32,
+        within: impl Fn(&Track, &Nearest) -> f32,
+    ) -> bool {
+        (0..=self.side_roads.len())
+            .filter(|&other| other != road)
+            .any(|other| {
+                let line = self.road(other);
+                let (_, level) = line.search(point, Some(height), other);
+                level.is_some_and(|nearest| nearest.distance < within(line, &nearest))
             })
     }
 
@@ -3104,6 +3169,7 @@ pub mod tests {
             banking: demo.banking,
             branches: &[],
             narrows: &[],
+            recharges: &[],
             pads: Vec::leak(vec![SpeedPad {
                 along: 100.0,
                 lateral: 3.0,

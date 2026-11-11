@@ -287,9 +287,14 @@ pub fn race_prompts(
                 lang.action_wheelie()
             },
         ),
+    ];
+    if hover {
+        prompts.push((first(Action::Nitro), lang.action_nitro()));
+    }
+    prompts.extend([
         (first(Action::Restart), lang.restart()),
         (first(Action::Pause), lang.action_pause()),
-    ];
+    ]);
     // M turns the sound off and on; on a gamepad, Select held with Y.
     prompts.push((shortcut_badges(device, Shortcut::Mute), lang.hint_sound()));
     prompts

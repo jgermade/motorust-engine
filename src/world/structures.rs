@@ -368,6 +368,55 @@ pub fn structure_pieces(
             ));
         }
     }
+    // The ways off the lap where it is a skyway: theirs too, where they are
+    // apart from it, with their masts and lamps.
+    let skyway = |along: f32| {
+        scenery
+            .bridges
+            .iter()
+            .any(|bridge| bridge.style == BridgeStyle::Skyway && bridge.span.contains(along, lap))
+    };
+    for fork in track.forks() {
+        let road = track.road(fork.road);
+        let on = |i: usize| road.apart_at(i) >= 1.0 && skyway(road.lap_along_at(i));
+        let mut runs: Vec<Vec<usize>> = Vec::new();
+        for i in 0..road.sample_count() {
+            match runs.last_mut() {
+                Some(run) if on(i) && run.last() == Some(&(i - 1)) => run.push(i),
+                _ if on(i) => runs.push(vec![i]),
+                _ => {}
+            }
+        }
+        for run in runs.into_iter().filter(|run| run.len() > 2) {
+            if !wanted(&Span {
+                from: road.lap_along_at(run[0]),
+                to: road.lap_along_at(run[run.len() - 1]),
+            }) {
+                continue;
+            }
+            let light = scenery.curbs[0];
+            let (strips, hung) = skyway_lamps(road, &run, light);
+            lamps.extend(hung);
+            pieces.push((
+                strips,
+                StandardMaterial {
+                    base_color: light,
+                    emissive: light.to_linear() * RING_GLOW,
+                    ..default()
+                },
+            ));
+            let (deck, _) = skyway_meshes(road, terrain, &run);
+            pieces.push((
+                deck,
+                StandardMaterial {
+                    base_color: SKYWAY_DECK,
+                    base_color_texture: Some(textures.plaster.clone()),
+                    perceptual_roughness: 0.9,
+                    ..default()
+                },
+            ));
+        }
+    }
     // What the circuit's themes build (see `super::themes`).
     for (_, theme) in scenery.themes.iter() {
         pieces.extend(theme.pieces(track, scenery, within, textures));
