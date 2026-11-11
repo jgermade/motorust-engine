@@ -907,9 +907,13 @@ pub fn light_the_sky(
             material.base_color = palette.clouds.with_alpha(*opacity * cloud_alpha);
         }
     }
+    // Each track's clouds where they are on no other's: the ring turned by
+    // its own angle, so the same heap is not over the same corner of every
+    // track.
+    let turn = Quat::from_rotation_y(clouds_turn(current.0));
     for (entity, cloud) in &clouds {
         if let Ok(mut transform) = transforms.get_mut(entity) {
-            *transform = lit_from_the_sun(cloud.at, cloud.size, sun);
+            *transform = lit_from_the_sun(turn * cloud.at, cloud.size, sun);
         }
     }
     for (entity, mut light) in &mut sunlight {
@@ -923,6 +927,14 @@ pub fn light_the_sky(
         ambient.color = palette.ambient;
         ambient.brightness = palette.ambient_brightness;
     }
+}
+
+/// How far round the ring of clouds is turned over track `index` (rad):
+/// by the golden angle each track, so no two tracks near each other in the
+/// list have them alike.
+fn clouds_turn(index: usize) -> f32 {
+    const GOLDEN_ANGLE: f32 = 2.399_963;
+    (index as f32 * GOLDEN_ANGLE).rem_euclid(TAU)
 }
 
 /// A quad `size` m big at `at`, facing the camera at the centre of the sky.
@@ -1023,7 +1035,7 @@ impl CloudKind {
             CloudKind::Cluster,
             CloudKind::Cumulus,
             CloudKind::Fractus,
-            CloudKind::Towering,
+            CloudKind::Cumulus,
             CloudKind::Cluster,
             CloudKind::Stratocumulus,
             CloudKind::Cumulus,
@@ -1088,15 +1100,17 @@ fn heap(seed: u32, middle: f32, half: f32, base: f32, tall: f32, count: u32, tow
             });
         }
     }
-    // Towers, one on another, leaning a little each way.
+    // Towers, one on another, leaning a little each way: broad and
+    // rounded, each bulging out of the one below it (a heap that narrowed
+    // to a point read as a pyramid, and was seen in every sky).
     let mut top = Vec2::new(middle, base - 0.3 * tall);
     for tower in 0..towers {
-        let radius = (0.09 + 0.07 * random(seed + 19, tower)) * (1.0 - 0.12 * tower as f32);
+        let radius = (0.14 + 0.06 * random(seed + 19, tower)) * (1.0 - 0.1 * tower as f32);
         top += Vec2::new(
-            0.18 * (random(seed + 17, tower) - 0.5),
-            -radius * (0.9 + 0.4 * random(seed + 23, tower)),
+            0.14 * (random(seed + 17, tower) - 0.5),
+            -radius * (0.55 + 0.25 * random(seed + 23, tower)),
         );
-        for (dx, scale) in [(0.0, 1.0), (-0.7, 0.6), (0.7, 0.55)] {
+        for (dx, scale) in [(0.0, 1.0), (-0.8, 0.75), (0.8, 0.7)] {
             puffs.push(Puff {
                 center: top + Vec2::new(dx * radius, 0.25 * radius * dx.abs()),
                 radius: radius * scale,
@@ -1112,8 +1126,58 @@ fn heap(seed: u32, middle: f32, half: f32, base: f32, tall: f32, count: u32, tow
     }
 }
 
-/// The heaps of cloud `shape`, as its kind is (see [`CloudKind`]).
+/// How far inside its image's edges a cloud's puffs keep (in units of the
+/// image's height): room for the warp and the billows round them.
+const CLOUD_MARGIN: f32 = 0.07;
+
+/// The heaps of cloud `shape`, as its kind is (see [`CloudKind`]), fitted
+/// inside its image (see [`fit_in_image`]).
 fn heaps(shape: u32) -> Vec<Heap> {
+    fit_in_image(heaps_as_made(shape))
+}
+
+/// `heaps` shrunk about their lowest base, and moved across, if they reach
+/// past the image's edges (less [`CLOUD_MARGIN`]): a cloud cut off along
+/// the top or a side of its image showed a straight edge in the sky.
+fn fit_in_image(mut heaps: Vec<Heap>) -> Vec<Heap> {
+    let width = CLOUD_IMAGE.x as f32 / CLOUD_IMAGE.y as f32;
+    let puffs = || heaps.iter().flat_map(|heap| heap.puffs.iter());
+    let left = puffs()
+        .map(|p| p.center.x - p.radius)
+        .fold(f32::MAX, f32::min);
+    let right = puffs()
+        .map(|p| p.center.x + p.radius)
+        .fold(f32::MIN, f32::max);
+    let top = puffs()
+        .map(|p| p.center.y - p.radius)
+        .fold(f32::MAX, f32::min);
+    let base = heaps.iter().map(|heap| heap.base).fold(f32::MIN, f32::max);
+    let scale = 1.0f32
+        .min((width - 2.0 * CLOUD_MARGIN) / (right - left))
+        .min((base - CLOUD_MARGIN) / (base - top));
+    let middle = (left + right) / 2.0;
+    let (left, right) = (
+        middle + (left - middle) * scale,
+        middle + (right - middle) * scale,
+    );
+    let shift = (CLOUD_MARGIN - left).max(0.0) - (right - (width - CLOUD_MARGIN)).max(0.0);
+    let x = |x: f32| middle + (x - middle) * scale + shift;
+    let y = |y: f32| base - (base - y) * scale;
+    for heap in &mut heaps {
+        for puff in &mut heap.puffs {
+            puff.center = Vec2::new(x(puff.center.x), y(puff.center.y));
+            puff.radius *= scale;
+        }
+        heap.middle = x(heap.middle);
+        heap.half *= scale;
+        heap.base = y(heap.base);
+        heap.curl *= scale;
+    }
+    heaps
+}
+
+/// The heaps of cloud `shape` as its kind makes them.
+fn heaps_as_made(shape: u32) -> Vec<Heap> {
     let r = |n: u32| random(shape + 101, n);
     match CloudKind::of(shape) {
         CloudKind::Cumulus => vec![heap(
@@ -1128,11 +1192,11 @@ fn heaps(shape: u32) -> Vec<Heap> {
         CloudKind::Towering => vec![heap(
             shape,
             1.0,
-            0.45 + 0.1 * r(1),
+            0.6 + 0.1 * r(1),
             0.84 + 0.04 * r(2),
-            1.4,
-            7,
-            3 + shape % 2,
+            1.15,
+            8,
+            2,
         )],
         CloudKind::Stratocumulus => (0..3)
             .map(|k| {
@@ -2154,9 +2218,19 @@ mod tests {
             };
             assert!(thickest > solid, "{shape}: {thickest}");
             // Clear all round the edges, so no cloud is cut off, and below
-            // the lowest base.
+            // the lowest base: nearly clear a few pixels in from them too
+            // (the border pixels themselves are cleared whatever the cloud).
             assert!((0..width).all(|x| alpha(x, 0) == 0));
             assert!((0..height).all(|y| alpha(0, y) == 0 && alpha(width - 1, y) == 0));
+            let edge = 4;
+            assert!(
+                (0..width).all(|x| alpha(x, edge) < 24),
+                "{shape}: cut off along the top"
+            );
+            assert!(
+                (0..height).all(|y| alpha(edge, y) < 24 && alpha(width - 1 - edge, y) < 24),
+                "{shape}: cut off at a side"
+            );
             let bottom = (CLOUD_BOTTOM * height as f32) as usize;
             assert!((0..width).all(|x| alpha(x, bottom + 1) == 0), "{shape}");
             // Not cut off along a straight line: its underside goes up and
@@ -2217,6 +2291,26 @@ mod tests {
             .iter()
             .fold((f32::MAX, 0.0f32), |(a, b), &w| (a.min(w), b.max(w)));
         assert!(wide > 2.0 * narrow, "{narrow} to {wide}");
+    }
+
+    #[test]
+    fn each_track_has_its_clouds_elsewhere_in_the_sky() {
+        // One heap of the ring, turned for the first few tracks: never in
+        // the same place twice, and well apart from one track to the next.
+        let turns: Vec<f32> = (0..10).map(clouds_turn).collect();
+        for (a, &first) in turns.iter().enumerate() {
+            for &second in &turns[a + 1..] {
+                let apart = (first - second).rem_euclid(TAU);
+                let apart = apart.min(TAU - apart);
+                assert!(apart > 0.15, "{turns:?}");
+            }
+        }
+        // Only one of the shapes towers, so a tower is not in every sky
+        // over and over.
+        let towers = (0..CLOUD_SHAPES)
+            .filter(|&shape| CloudKind::of(shape) == CloudKind::Towering)
+            .count();
+        assert_eq!(towers, 1);
     }
 
     #[test]
@@ -2392,5 +2486,22 @@ mod tests {
             .fold(0.0, f32::max);
         assert!(SUN_DISTANCE > furthest + 100.0, "{SUN_DISTANCE} {furthest}");
         const { assert!(SUN_DISTANCE < RADIUS) };
+    }
+}
+
+/// Looking at the clouds.
+#[cfg(test)]
+mod dump_clouds {
+    /// Writes the cloud images, as raw RGBA 512 × 256, to the system's
+    /// temporary folder (`cloud_N.rgba`), to look at:
+    /// `cargo test --lib dump_cloud_images -- --ignored`.
+    #[test]
+    #[ignore]
+    fn dump_cloud_images() {
+        for shape in 0..super::CLOUD_SHAPES {
+            let image = super::cloud_image(shape);
+            let path = std::env::temp_dir().join(format!("cloud_{shape}.rgba"));
+            std::fs::write(path, image.data.as_ref().unwrap()).unwrap();
+        }
     }
 }

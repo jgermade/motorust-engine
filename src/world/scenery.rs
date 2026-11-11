@@ -426,6 +426,17 @@ pub struct Gantry {
     /// El rótulo, o un tablero de ajedrez si no hay.
     #[serde(deserialize_with = "crate::circuits::data::optional_text", default)]
     pub text: Option<&'static str>,
+    /// Whether the engine draws it (unless a circuit's file says otherwise,
+    /// it does). A gantry not drawn is still there for the race: a
+    /// checkpoint stays a checkpoint, for a game's theme to draw an arch of
+    /// its own over the road there.
+    #[serde(default = "drawn")]
+    pub drawn: bool,
+}
+
+/// A [`Gantry`]'s `drawn` where a circuit's file leaves it out.
+fn drawn() -> bool {
+    true
 }
 
 /// Un cartel publicitario junto a la carretera.
@@ -1090,6 +1101,20 @@ pub struct Portal {
 #[cfg(any(test, feature = "testing"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_gantry_is_drawn_unless_its_file_says_a_theme_draws_its_own() {
+        let drawn: Gantry =
+            ron::from_str(r#"(along: 800.0, color: (0.8, 0.1, 0.1), text: Some("CHECKPOINT"))"#)
+                .unwrap();
+        assert!(drawn.drawn);
+        let own: Gantry = ron::from_str(
+            r#"(along: 800.0, color: (0.8, 0.1, 0.1), text: Some("CHECKPOINT"), drawn: false)"#,
+        )
+        .unwrap();
+        assert!(!own.drawn);
+        assert_eq!(own.text, Some("CHECKPOINT"));
+    }
 
     #[test]
     fn spans_can_wrap_around_the_finish_line() {

@@ -577,6 +577,11 @@ pub struct Body<'a> {
     pub knock: &'a mut Knock,
     /// Whether it is already down, sliding on its side.
     pub down: bool,
+    /// How much harder than [`SIDE_FALL`], [`YAW_FALL`] and [`FRONT_FALL`]
+    /// a hit must be to bring its rider down (1: as hard as they say; a
+    /// player's, more on an easier race: see
+    /// [`crate::settings::Difficulty::fall_tolerance`]).
+    pub tolerance: f32,
 }
 
 impl Body<'_> {
@@ -686,7 +691,7 @@ pub fn collide(mut a: Body, mut b: Body) -> Option<Contact> {
         before,
         dv,
         dw,
-        falls: !body.down && rider_falls(body.state, r, dv, dw),
+        falls: !body.down && rider_falls(body.state, r, dv, dw, body.tolerance),
     };
     let (dwa, dwb) = (cross(ra, impulse) / ga, -cross(rb, impulse) / gb);
     let contact = Contact {
@@ -701,12 +706,15 @@ pub fn collide(mut a: Body, mut b: Body) -> Option<Contact> {
 
 /// Whether a rider on a bike in `state` goes down after a hit at `r` (from
 /// the centre of the bike) that changes its velocity by `dv` and its spin by
-/// `dw`.
-pub fn rider_falls(state: &BikeState, r: Vec2, dv: Vec2, dw: f32) -> bool {
+/// `dw`, `tolerance` times as hard as [`SIDE_FALL`], [`YAW_FALL`] and
+/// [`FRONT_FALL`] say bringing it down.
+pub fn rider_falls(state: &BikeState, r: Vec2, dv: Vec2, dw: f32, tolerance: f32) -> bool {
     let ahead = forward(state.heading);
     let sideways = dv.reject_from_normalized(ahead).length();
     let front_wheel = r.dot(ahead) > 0.3;
-    sideways > SIDE_FALL || dw.abs() > YAW_FALL || (front_wheel && dv.dot(ahead) < -FRONT_FALL)
+    sideways > SIDE_FALL * tolerance
+        || dw.abs() > YAW_FALL * tolerance
+        || (front_wheel && dv.dot(ahead) < -FRONT_FALL * tolerance)
 }
 
 /// The spine of a bike's collision shape, from the rear wheel to the front.
@@ -897,10 +905,10 @@ pub fn fall_off(
 }
 
 /// Whether hitting a wall like this brings the rider down: only going into
-/// it faster than [`WALL_FALL`]. Scraping along it, or bumping into it
-/// slowly, is ridden out.
-pub fn wall_knocks_down(hit: &WallHit) -> bool {
-    hit.into > WALL_FALL
+/// it faster than [`WALL_FALL`] (`tolerance` times it: see [`Body`]).
+/// Scraping along it, or bumping into it slowly, is ridden out.
+pub fn wall_knocks_down(hit: &WallHit, tolerance: f32) -> bool {
+    hit.into > WALL_FALL * tolerance
 }
 
 /// The rider goes down against a wall: the wall stops the bike's velocity
@@ -1171,17 +1179,54 @@ pub mod tests {
                 state: a,
                 knock: ka,
                 down: false,
+                tolerance: 1.0,
             },
             Body {
                 state: b,
                 knock: kb,
                 down: false,
+                tolerance: 1.0,
             },
         )
     }
 
     fn momentum(a: &BikeState, ka: &Knock, b: &BikeState, kb: &Knock) -> Vec2 {
         forward(a.heading) * a.speed + ka.velocity + forward(b.heading) * b.speed + kb.velocity
+    }
+
+    #[test]
+    fn an_easier_race_lets_a_player_ride_out_harder_knocks() {
+        use crate::settings::{DIFFICULTIES, Difficulty};
+        // Very hard as it has always been; each easier one more tolerant.
+        assert_eq!(Difficulty::VeryHard.fall_tolerance(), 1.0);
+        for pair in DIFFICULTIES.windows(2) {
+            assert!(pair[0].fall_tolerance() > pair[1].fall_tolerance());
+        }
+        let state = riding(Vec2::ZERO, 0.0, 30.0);
+        let side = forward(state.heading).perp() * (SIDE_FALL * 1.4);
+        assert!(rider_falls(&state, Vec2::ZERO, side, 0.0, 1.0));
+        assert!(!rider_falls(
+            &state,
+            Vec2::ZERO,
+            side,
+            0.0,
+            Difficulty::Medium.fall_tolerance()
+        ));
+        let spin = YAW_FALL * 1.2;
+        assert!(rider_falls(
+            &state,
+            Vec2::ZERO,
+            Vec2::ZERO,
+            spin,
+            Difficulty::VeryHard.fall_tolerance()
+        ));
+        assert!(!rider_falls(
+            &state,
+            Vec2::ZERO,
+            Vec2::ZERO,
+            spin,
+            Difficulty::Hard.fall_tolerance()
+        ));
     }
 
     #[test]
@@ -1671,7 +1716,10 @@ pub mod tests {
         for (speed, angle) in [(80.0, 0.1), (45.0, 0.2), (8.3, FRAC_PI_2)] {
             let (_, _, hit) = wall_hit(speed, angle);
             let hit = hit.expect("touches the wall");
-            assert!(!wall_knocks_down(&hit), "{speed} m/s at {angle}: {hit:?}");
+            assert!(
+                !wall_knocks_down(&hit, 1.0),
+                "{speed} m/s at {angle}: {hit:?}"
+            );
         }
     }
 
@@ -1681,7 +1729,10 @@ pub mod tests {
         for (speed, angle) in [(50.0, 0.35), (14.0, FRAC_PI_2)] {
             let (_, _, hit) = wall_hit(speed, angle);
             let hit = hit.expect("touches the wall");
-            assert!(wall_knocks_down(&hit), "{speed} m/s at {angle}: {hit:?}");
+            assert!(
+                wall_knocks_down(&hit, 1.0),
+                "{speed} m/s at {angle}: {hit:?}"
+            );
         }
     }
 

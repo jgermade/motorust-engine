@@ -1106,11 +1106,13 @@ pub mod tests {
                     state: &mut state,
                     knock: &mut knock,
                     down: false,
+                    tolerance: 1.0,
                 },
                 Body {
                     state: &mut stopped,
                     knock: &mut stopped_knock,
                     down: false,
+                    tolerance: 1.0,
                 },
             );
             assert!(contact.is_none(), "no la toca: {contact:?}");
@@ -1226,7 +1228,7 @@ pub mod tests {
                 let wall;
                 (racer.state, wall) =
                     advance_hitting_walls(&racer.state, &input, track, &tuning, dt);
-                if let Some(hit) = wall.filter(wall_knocks_down) {
+                if let Some(hit) = wall.filter(|hit| wall_knocks_down(hit, 1.0)) {
                     racer.crash = fall_against_wall(&mut racer.state, &mut racer.knock, &hit);
                     ridden.falls += 1;
                 }
@@ -1244,11 +1246,13 @@ pub mod tests {
                             state: &mut a.state,
                             knock: &mut a.knock,
                             down: a.crash.is_down(),
+                            tolerance: 1.0,
                         },
                         Body {
                             state: &mut b.state,
                             knock: &mut b.knock,
                             down: b.crash.is_down(),
+                            tolerance: 1.0,
                         },
                     );
                     let Some(contact) = contact else {

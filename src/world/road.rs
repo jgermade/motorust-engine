@@ -38,13 +38,18 @@ pub fn arcade_band(along: f32) -> usize {
 
 /// The colour of an arcade road's wall of `style` in band `band`, `up`
 /// metres from the road: two shades of it, one band after the other, a
-/// lighter coping on the stone; `None` for those drawn as they always are.
+/// lighter coping on the stone; the low parapet red and white band by band,
+/// as the curbs, so that it stands out against the rock and the sea; `None`
+/// for those drawn as they always are.
 fn arcade_wall_color(style: WallStyle, band: usize, up: f32) -> Option<Color> {
     let shade = [1.0, 0.86][band];
     let color = match style {
         WallStyle::Stone if up > 0.91 => Color::srgb(0.93, 0.84, 0.68),
         WallStyle::Stone => Color::srgb(0.78, 0.64, 0.47),
-        WallStyle::Concrete | WallStyle::Parapet => Color::srgb(0.93, 0.93, 0.92),
+        WallStyle::Parapet => {
+            return Some([Color::srgb(0.86, 0.12, 0.1), Color::srgb(0.95, 0.94, 0.92)][band]);
+        }
+        WallStyle::Concrete => Color::srgb(0.93, 0.93, 0.92),
         WallStyle::Hedge => Color::srgb(0.25, 0.55, 0.22),
         WallStyle::Timber => Color::srgb(0.6, 0.42, 0.26),
         _ => return None,
@@ -511,7 +516,8 @@ pub fn road_pieces(
     pieces
 }
 
-/// The arches over the road (those `within` a stretch of it, if given).
+/// The arches over the road (those `within` a stretch of it, if given), but
+/// those a game's theme draws itself (see [`Gantry::drawn`]).
 pub fn spawn_gantries(
     world: &mut ChildSpawnerCommands,
     track: &Track,
@@ -523,6 +529,7 @@ pub fn spawn_gantries(
     for gantry in scenery
         .gantries
         .iter()
+        .filter(|gantry| gantry.drawn)
         .filter(|gantry| within.is_none_or(|stretch| stretch.contains(gantry.along, lap)))
         // None inside a tube, where an arch over the road has nowhere to
         // stand: its checkpoint is there all the same.
@@ -928,13 +935,18 @@ fn spawn_surface(
         ribbon(road, -edge, -edge + LINE_WIDTH, PAINT_LIFT, 1.0, white),
         painted(),
     );
+    // No centre line where the walls close in on the road (down to a single
+    // lane, as under a bridge's arch or a cliff).
+    let wide = |index: usize| line.half_width_at(index) >= half - 0.05;
     let dashes = |index: usize, corners| {
         (index % (DASH.0 + DASH.1) < DASH.0
             && clear(index, corners)
             && !planked(index)
             && !indoors
-            && !plated)
-            .then_some(Color::WHITE)
+            && !plated
+            && wide(index)
+            && wide(index + 1))
+        .then_some(Color::WHITE)
     };
     let center = LINE_WIDTH / 2.0;
     spawn(
@@ -1261,6 +1273,32 @@ fn ribbon(
     ribbon_in_strips(road, from, to, lift, tile, 1, paint)
 }
 
+/// Where a point `lateral` metres from the centre line of `line`, as the
+/// road is laid at its full width, lies at point `index` where its walls
+/// close in (see [`crate::track::Narrowing`]): the asphalt drawn in with
+/// them to [`Track::half_width_at`], what lies on it (its paint) brought in
+/// with it, the middle of it squeezed and the metre along its edges moved in
+/// as it is, so that its edge lines keep their width; what lies past it
+/// (the curbs) moved in as far, but never past the walls.
+fn narrowed(line: &Track, index: usize, lateral: f32) -> f32 {
+    let half = line.half_width();
+    let narrow = line.half_width_at(index);
+    if narrow >= half {
+        return lateral;
+    }
+    let edge = 1.0f32.min(narrow / 2.0);
+    let across = lateral.abs();
+    let moved = if across <= half - edge {
+        across * (narrow - edge) / (half - edge)
+    } else {
+        (across - (half - narrow)).min(line.wall_at(index) - NARROW_CLEAR)
+    };
+    moved.copysign(lateral)
+}
+
+/// How far inside the walls a curb ends where they close in on the road (m).
+const NARROW_CLEAR: f32 = 0.05;
+
 /// A ribbon as [`ribbon`], in `strips` strips side by side across it:
 /// where the road's banking changes quickly, each of its pieces is twisted
 /// (one side rising more than the other), and two triangles across it all
@@ -1290,6 +1328,7 @@ fn ribbon_in_strips(
             continue;
         };
         let at = |i: usize, lateral: f32| {
+            let lateral = narrowed(line, i, lateral);
             road.surface_point(i, lateral) + Vec3::Y * (SURFACE_Y + lift + road.lift())
         };
         let (v0, v1) = (index as f32 * step / tile, (index + 1) as f32 * step / tile);

@@ -2470,6 +2470,7 @@ fn simulate_bikes(
     tuning: Res<BikeTuning>,
     track: Res<Track>,
     race: Res<Race>,
+    settings: Option<Res<crate::settings::Settings>>,
     mut bikes: Query<(
         Entity,
         &BikeInput,
@@ -2524,7 +2525,13 @@ fn simulate_bikes(
             let wall;
             (*state, wall) = advance_hitting_walls(&state, input, &track, &tuning, dt);
             if let Some(hit) = wall {
-                let falls = crash::wall_knocks_down(&hit);
+                // A player (who feels the hits) rides more of it out on an
+                // easier race.
+                let tolerance = match impact.is_some() {
+                    true => fall_tolerance(settings.as_deref()),
+                    false => 1.0,
+                };
+                let falls = crash::wall_knocks_down(&hit, tolerance);
                 if falls {
                     *crash = crash::fall_against_wall(&mut state, &mut knock, &hit);
                 }
@@ -2563,6 +2570,13 @@ fn simulate_bikes(
     }
 }
 
+/// How much harder a knock has to be to bring a player down (see
+/// [`crate::settings::Difficulty::fall_tolerance`]): as on very hard without
+/// the settings.
+fn fall_tolerance(settings: Option<&crate::settings::Settings>) -> f32 {
+    settings.map_or(1.0, |settings| settings.difficulty.fall_tolerance())
+}
+
 /// Resolves the contacts between bikes (see [`crash`]): they push each other,
 /// and the riders that cannot ride the hit out go down. A bike pushed into a
 /// wall stays out of it.
@@ -2570,6 +2584,7 @@ fn simulate_bikes(
 fn separate_bikes(
     time: Res<Time>,
     track: Res<Track>,
+    settings: Option<Res<crate::settings::Settings>>,
     mut bikes: Query<(
         &mut BikeState,
         &mut Knock,
@@ -2598,16 +2613,24 @@ fn separate_bikes(
         }
         let (down_a, down_b) = (crash_a.is_down(), crash_b.is_down());
         let (from_a, from_b) = (state_a.position, state_b.position);
+        // The players (who feel the hits) ride more of them out on an easier
+        // race.
+        let tolerance = |player: bool| match player {
+            true => fall_tolerance(settings.as_deref()),
+            false => 1.0,
+        };
         let contact = crash::collide(
             crash::Body {
                 state: &mut state_a,
                 knock: &mut knock_a,
                 down: down_a,
+                tolerance: tolerance(impact_a.is_some()),
             },
             crash::Body {
                 state: &mut state_b,
                 knock: &mut knock_b,
                 down: down_b,
+                tolerance: tolerance(impact_b.is_some()),
             },
         );
         for (state, from) in [(&mut state_a, from_a), (&mut state_b, from_b)] {
