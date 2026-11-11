@@ -475,6 +475,65 @@ fn chamfer(land: &[bool], width: usize, height: usize, wanted: bool) -> Vec<f32>
 }
 
 /// The sea: a flat square out past the fog, the same for every circuit.
+/// The lines of a neon grid on the sea under a sunset of the 80s (see
+/// [`grid_mesh`]): how far apart (m), how wide (m), how far round the
+/// circuit they reach (m), and how bright they glow.
+const GRID_SPACING: f32 = 36.0;
+const GRID_WIDTH: f32 = 0.5;
+const GRID_REACH: f32 = 1800.0;
+pub const GRID_GLOW: Color = Color::srgb(0.75, 0.22, 0.85);
+
+/// A light neon grid on the sea, as the 80s drew the ground under their
+/// sunsets: thin lines [`GRID_SPACING`] apart either way, flat on the water
+/// (its height is the sea's, given by the entity), over the circuit and
+/// [`GRID_REACH`] round it, `points` its road. Where the land stands over
+/// the sea, it hides them; far off, the fog does. A long quad per line, so
+/// it costs next to nothing.
+pub fn grid_mesh(points: &[Vec2]) -> Mesh {
+    let (mut min, mut max) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for &p in points {
+        min = min.min(p);
+        max = max.max(p);
+    }
+    let snap = |v: Vec2, round: fn(f32) -> f32| (v / GRID_SPACING).map(round) * GRID_SPACING;
+    let (min, max) = (
+        snap(min - GRID_REACH, f32::floor),
+        snap(max + GRID_REACH, f32::ceil),
+    );
+    let mut builder = super::quads::MeshBuilder::default();
+    let half = GRID_WIDTH / 2.0;
+    let lift = 0.15;
+    let mut x = min.x;
+    while x <= max.x {
+        builder.quad(
+            [
+                (Vec3::new(x - half, lift, min.y), Vec2::ZERO),
+                (Vec3::new(x - half, lift, max.y), Vec2::Y),
+                (Vec3::new(x + half, lift, max.y), Vec2::ONE),
+                (Vec3::new(x + half, lift, min.y), Vec2::X),
+            ],
+            Vec3::Y,
+            Color::WHITE,
+        );
+        x += GRID_SPACING;
+    }
+    let mut z = min.y;
+    while z <= max.y {
+        builder.quad(
+            [
+                (Vec3::new(min.x, lift, z - half), Vec2::ZERO),
+                (Vec3::new(min.x, lift, z + half), Vec2::Y),
+                (Vec3::new(max.x, lift, z + half), Vec2::ONE),
+                (Vec3::new(max.x, lift, z - half), Vec2::X),
+            ],
+            Vec3::Y,
+            Color::WHITE,
+        );
+        z += GRID_SPACING;
+    }
+    builder.build()
+}
+
 pub fn sea_mesh() -> Mesh {
     const CELLS: u32 = 16;
     let row = CELLS + 1;

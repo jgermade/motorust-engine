@@ -1,6 +1,7 @@
 //! The works along the road: tunnels cut through the rock, bridges over the
 //! water (with red arches, or of wood) and billboards.
 
+use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 
 use super::Assets3d;
@@ -122,6 +123,12 @@ pub fn structure_pieces(
         }
         let indices = indices(track, *tunnel, lap);
         let mut parts = tunnel_meshes(track, terrain, scenery.soil, &indices);
+        // Drawn as voxels, the rock over the tunnel is painted as the
+        // ground's blocks are, and nothing is textured (see `voxel_tunnel`).
+        let voxel = scenery.look.voxel_size();
+        if let Some(size) = voxel {
+            voxel_tunnel(&mut parts, size);
+        }
         lamps.append(&mut parts.lamps);
         // The top in flower, drawn as the ground round it is.
         ground.extend(parts.meadows.drain(..).map(|(kind, meadow)| GroundMesh {
@@ -234,6 +241,10 @@ pub fn structure_pieces(
         let frame = match scenery.soil {
             Soil::Granite => rock.clone(),
             _ => concrete.clone(),
+        };
+        let (rock, grass, lining, frame, concrete) = match voxel {
+            Some(_) => voxel_tunnel_materials(lining, frame, concrete),
+            None => (rock, grass, lining, frame, concrete),
         };
         for (mesh, material) in [
             (parts.rock, rock),
@@ -424,6 +435,79 @@ struct TunnelParts {
     /// The lamps, for their light on what passes under them (see
     /// [`super::lamps`]).
     lamps: Vec<Lamp>,
+}
+
+/// The rock of a tunnel's hill painted as the ground drawn as voxels is, in
+/// blocks `size` metres on a side: each vertex the colour of the block it
+/// is in, a little lighter or darker than the next, in the hue of the
+/// rock's layer there (see [`super::terrain::rock_stratum`]), so that the
+/// face over its mouth reads as the cliffs round it do.
+fn voxel_tunnel(parts: &mut TunnelParts, size: f32) {
+    let Some(VertexAttributeValues::Float32x3(positions)) =
+        parts.rock.attribute(Mesh::ATTRIBUTE_POSITION).cloned()
+    else {
+        return;
+    };
+    let normals = match parts.rock.attribute(Mesh::ATTRIBUTE_NORMAL) {
+        Some(VertexAttributeValues::Float32x3(normals)) => normals.clone(),
+        _ => vec![[0.0, 1.0, 0.0]; positions.len()],
+    };
+    let colors: Vec<[f32; 4]> = positions
+        .iter()
+        .zip(&normals)
+        .map(|(&p, &n)| {
+            let p = Vec3::from_array(p);
+            let cube = (p / size).floor().as_ivec3();
+            let light = 0.9 + 0.2 * super::terrain::hash01(cube);
+            let base = VOXEL_TUNNEL_ROCK.map(|c| c * light);
+            super::terrain::rock_stratum(
+                [base[0], base[1], base[2], 1.0],
+                (cube.as_vec3() + 0.5) * size,
+                Vec3::from_array(n),
+            )
+        })
+        .collect();
+    parts.rock.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+}
+
+/// The colour of a tunnel's rock drawn as voxels, before the hue of its
+/// layer: about as light as the ground's rock.
+const VOXEL_TUNNEL_ROCK: [f32; 3] = [0.2, 0.16, 0.13];
+
+/// A tunnel's materials drawn as voxels: of flat colours, as everything round
+/// it, no texture on them: the rock in its vertices' colours, the grass on
+/// top green, the lining in warm cream lit by the lamps, the frame and the
+/// sidewalks white.
+fn voxel_tunnel_materials(
+    lining: StandardMaterial,
+    frame: StandardMaterial,
+    concrete: StandardMaterial,
+) -> (
+    StandardMaterial,
+    StandardMaterial,
+    StandardMaterial,
+    StandardMaterial,
+    StandardMaterial,
+) {
+    let plain = |material: StandardMaterial, color: Color| StandardMaterial {
+        base_color: color,
+        base_color_texture: None,
+        ..material
+    };
+    (
+        StandardMaterial {
+            perceptual_roughness: 0.95,
+            ..default()
+        },
+        StandardMaterial {
+            base_color: Color::srgb(0.3, 0.55, 0.2),
+            perceptual_roughness: 0.95,
+            ..default()
+        },
+        plain(lining, Color::srgb(0.86, 0.72, 0.52)),
+        plain(frame, Color::srgb(0.9, 0.89, 0.86)),
+        plain(concrete, Color::srgb(0.78, 0.76, 0.72)),
+    )
 }
 
 /// A tunnel, straight inside, with a flat roof, warm lights and its walls
@@ -1204,7 +1288,7 @@ fn brake_marker_image(marker: &BrakeMarker) -> Image {
 /// threads that prepare the circuits, so the main thread only copies them.
 pub fn draw_signs(scenery: &Scenery, wall: f32) {
     let span = super::road::gantry_span(wall);
-    for gantry in scenery.gantries {
+    for gantry in scenery.gantries.iter().filter(|gantry| gantry.drawn) {
         super::road::gantry_image(gantry, span);
     }
     for billboard in scenery.billboards {
