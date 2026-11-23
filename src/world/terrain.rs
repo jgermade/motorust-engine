@@ -871,13 +871,15 @@ impl Terrain {
         self.look_drawn(point).1
     }
 
-    /// The ground's meshes over the cells in rows `cells` of the grid (see
-    /// [`Self::meshes`]), its points' normals given: their vertices shared
-    /// within it. Drawn as `style` says (see [`Self::meshes_as`]), and only
-    /// the triangles of the grid on `side`, if given.
+    /// The ground's meshes over the cells of the grid in rows `rows` and
+    /// columns `columns`, a square of it (see [`Self::meshes`]), its points'
+    /// normals given: their vertices shared within it. Drawn as `style` says
+    /// (see [`Self::meshes_as`]), and only the triangles of the grid on
+    /// `side`, if given.
     fn band(
         &self,
-        cells: std::ops::Range<usize>,
+        rows: std::ops::Range<usize>,
+        columns: std::ops::Range<usize>,
         normals: &[Vec3],
         style: Option<Realm>,
         side: Option<Realm>,
@@ -886,16 +888,18 @@ impl Terrain {
         let width = self.xs.len();
         let position =
             |i: usize, j: usize| Vec3::new(self.xs[i], self.heights[j * width + i], self.zs[j]);
-        // Its points, from its first row to the one after its last.
-        let first = cells.start * width;
-        let band_points = (cells.len() + 1) * width;
+        // Its points, from its first row and column to the ones after its
+        // last, numbered within it.
+        let across = columns.len() + 1;
+        let band_points = (rows.len() + 1) * across;
+        let local = |(i, j): (usize, usize)| (j - rows.start) * across + i - columns.start;
         let mut grass = Builder::shared(band_points);
         let mut sand = Builder::shared(band_points);
         let mut rock = Builder::default();
         let mut snow = Builder::shared(band_points);
         let mut meadows: Vec<(FlowerKind, Builder)> = Vec::new();
-        for j in cells {
-            for i in 0..width - 1 {
+        for j in rows.clone() {
+            for i in columns.clone() {
                 // Under the blocks, the ground is theirs.
                 let middle = Vec2::new(
                     (self.xs[i] + self.xs[i + 1]) / 2.0,
@@ -936,7 +940,9 @@ impl Terrain {
                         let shared = builder.shared_vertices.is_some();
                         for w in weights {
                             // A point of the grid, or one on a border.
-                            let grid = (0..3).find(|&k| w[k] == 1.0).map(|k| indices[k] - first);
+                            let grid = (0..3)
+                                .find(|&k| w[k] == 1.0)
+                                .map(|k| local(corners[triangle[k]]));
                             builder.push(grid, || {
                                 let blend = |values: [Vec3; 3]| {
                                     values[0] * w.x + values[1] * w.y + values[2] * w.z
@@ -1097,39 +1103,39 @@ impl Terrain {
                 })
                 .collect()
         });
-        // The bands dealt out to the threads in turn, so that each gets some
-        // of the dense middle of the grid and some of its sparse edges.
-        let cells = depth - 1;
-        let count = cells.div_ceil(BAND_ROWS);
-        let threads = threads.clamp(1, count.max(1));
-        let order: Vec<usize> = (0..threads)
-            .flat_map(|first| (first..count).step_by(threads))
+        // The ground in squares of about `CHUNK` metres (the grid's cells
+        // grow far off, so the squares there are bigger), so that the
+        // cameras and the sun's shadow cascades draw only those they reach.
+        // Dealt out to the threads in turn, so that each gets some of the
+        // dense middle of the grid and some of its sparse edges.
+        let squares: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)> = spans(&self.zs)
+            .into_iter()
+            .flat_map(|rows| {
+                spans(&self.xs)
+                    .into_iter()
+                    .map(move |columns| (rows.clone(), columns))
+            })
             .collect();
+        let threads = threads.clamp(1, squares.len().max(1));
+        let order: Vec<usize> = (0..threads)
+            .flat_map(|first| (first..squares.len()).step_by(threads))
+            .collect();
+        // A circuit split between realms keeps its ground smooth: its
+        // triangles are told apart by realm.
+        let blocks = self.voxel.as_ref().filter(|_| side.is_none());
         let mut bands = on_cores(&order, threads, |part| {
             part.iter()
-                .map(|&band| {
-                    let rows = band * BAND_ROWS..((band + 1) * BAND_ROWS).min(cells);
-                    // A circuit split between realms keeps its ground smooth:
-                    // its triangles are told apart by realm.
-                    let blocks = self.voxel.as_ref().filter(|_| side.is_none());
-                    (band, self.band(rows, &normals, style, side, blocks))
+                .map(|&square| {
+                    let (rows, columns) = squares[square].clone();
+                    (
+                        square,
+                        self.band(rows, columns, &normals, style, side, blocks),
+                    )
                 })
                 .collect()
         });
-        bands.sort_by_key(|(band, _)| *band);
-        let mut joined = Band::default();
-        for (_, band) in bands {
-            joined.append(band);
-        }
-        let Band {
-            grass,
-            sand,
-            rock,
-            snow,
-            meadows,
-        } = joined;
+        bands.sort_by_key(|(square, _)| *square);
         let tile = |ground: Ground| tile_of(ground, self.soil);
-        let (grass_tile, rock_tile) = (tile(Ground::Grass), tile(Ground::Rock));
         let layers = style.map(|style| match side {
             Some(side) if side != style => style.beyond_layers(),
             _ => style.layers(),
@@ -1141,17 +1147,36 @@ impl Terrain {
             layers: layers.clone(),
             plain: None,
         };
-        let mut meshes = vec![
-            ground(Ground::Grass, None, grass.build(grass_tile)),
-            ground(Ground::Sand, None, sand.build(tile(Ground::Sand))),
-            ground(Ground::Rock, None, rock.build(rock_tile)),
-            ground(Ground::Snow, None, snow.build(tile(Ground::Snow))),
-        ];
-        meshes.extend(
-            meadows
-                .into_iter()
-                .map(|(kind, meadow)| ground(Ground::Grass, Some(kind), meadow.build(GRASS_TILE))),
-        );
+        let mut meshes = Vec::new();
+        for (_, band) in bands {
+            let Band {
+                grass,
+                sand,
+                rock,
+                snow,
+                meadows,
+            } = band;
+            let kinds = [
+                (Ground::Grass, grass),
+                (Ground::Sand, sand),
+                (Ground::Rock, rock),
+                (Ground::Snow, snow),
+            ];
+            meshes.extend(
+                kinds
+                    .into_iter()
+                    .filter(|(_, builder)| !builder.indices.is_empty())
+                    .map(|(kind, builder)| ground(kind, None, builder.build(tile(kind)))),
+            );
+            meshes.extend(
+                meadows
+                    .into_iter()
+                    .filter(|(_, meadow)| !meadow.indices.is_empty())
+                    .map(|(kind, meadow)| {
+                        ground(Ground::Grass, Some(kind), meadow.build(GRASS_TILE))
+                    }),
+            );
+        }
         if let Some(grid) = self.voxel.as_ref().filter(|_| side.is_none()) {
             // Dealt out to the threads in turn, as the bands are, so that
             // each gets some of the squares dense with the smallest blocks.
@@ -1460,8 +1485,11 @@ pub fn spawn_terrain(
     materials: &mut Assets<StandardMaterial>,
 ) {
     // The blocks, in their colours alone: one material for all their
-    // squares.
+    // squares; and one for each kind of ground, or of flowers, for all of
+    // its squares.
     let mut blocks: Option<Handle<StandardMaterial>> = None;
+    type Kind = (Ground, Option<FlowerKind>);
+    let mut kinds: Vec<(Kind, Handle<StandardMaterial>)> = Vec::new();
     for GroundMesh {
         ground,
         flowers,
@@ -1493,27 +1521,35 @@ pub fn spawn_terrain(
             }
             continue;
         }
-        let (texture, roughness, reflectance) = match flowers {
-            // Grass in flower: the lawn covered in blossoms.
-            Some(_) if ground == Ground::Grass => {
-                let meadow = meadows
-                    .iter()
-                    .find(|(kind, _)| Some(*kind) == flowers)
-                    .map(|(_, meadow)| meadow)
-                    .expect("a meadow for each kind of flower drawn");
-                (Some(meadow), 0.9, 0.18)
+        let material = match kinds.iter().find(|(kind, _)| *kind == (ground, flowers)) {
+            Some((_, material)) => material.clone(),
+            None => {
+                let (texture, roughness, reflectance) = match flowers {
+                    // Grass in flower: the lawn covered in blossoms.
+                    Some(_) if ground == Ground::Grass => {
+                        let meadow = meadows
+                            .iter()
+                            .find(|(kind, _)| Some(*kind) == flowers)
+                            .map(|(_, meadow)| meadow)
+                            .expect("a meadow for each kind of flower drawn");
+                        (Some(meadow), 0.9, 0.18)
+                    }
+                    _ => ground_look(ground, terrain.soil, textures),
+                };
+                let material = materials.add(StandardMaterial {
+                    base_color_texture: texture.cloned(),
+                    perceptual_roughness: roughness,
+                    reflectance,
+                    ..default()
+                });
+                kinds.push(((ground, flowers), material.clone()));
+                material
             }
-            _ => ground_look(ground, terrain.soil, textures),
         };
         let mut piece = world.spawn((
             GroundPiece,
             Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color_texture: texture.cloned(),
-                perceptual_roughness: roughness,
-                reflectance,
-                ..default()
-            })),
+            MeshMaterial3d(material),
         ));
         if let Some(layers) = layers {
             piece.insert(layers);
@@ -2924,11 +2960,23 @@ fn soil_vertex_color(p: Vec3, normal: Vec3) -> [f32; 4] {
         .to_f32_array()
 }
 
-/// How many rows of the grid's cells a band of the ground's meshes takes
-/// (see [`Terrain::meshes`]).
-const BAND_ROWS: usize = 24;
+/// The cells of a grid's `axis` in spans about [`CHUNK`] metres long, or
+/// one cell where a cell is longer (far off): the squares the ground's
+/// meshes are cut into (see [`Terrain::meshes`]).
+fn spans(axis: &[f32]) -> Vec<std::ops::Range<usize>> {
+    let cells = axis.len().saturating_sub(1);
+    let mut spans = Vec::new();
+    let mut start = 0;
+    for cell in 0..cells {
+        if axis[cell + 1] - axis[start] >= CHUNK - 1e-3 || cell + 1 == cells {
+            spans.push(start..cell + 1);
+            start = cell + 1;
+        }
+    }
+    spans
+}
 
-/// The ground's meshes over a band of the grid, by kind of ground (see
+/// The ground's meshes over a square of the grid, by kind of ground (see
 /// [`Terrain::band`]).
 #[derive(Default)]
 struct Band {
@@ -2937,23 +2985,6 @@ struct Band {
     rock: Builder,
     snow: Builder,
     meadows: Vec<(FlowerKind, Builder)>,
-}
-
-impl Band {
-    /// `next`, the band after it, added to it: each kind of ground's mesh
-    /// to its own, a kind of meadow not met before after the others.
-    fn append(&mut self, next: Band) {
-        self.grass.append(next.grass);
-        self.sand.append(next.sand);
-        self.rock.append(next.rock);
-        self.snow.append(next.snow);
-        for (kind, meadow) in next.meadows {
-            match self.meadows.iter_mut().find(|(k, _)| *k == kind) {
-                Some((_, mine)) => mine.append(meadow),
-                None => self.meadows.push((kind, meadow)),
-            }
-        }
-    }
 }
 
 /// Acumula los triángulos de un tipo de suelo.
@@ -3013,17 +3044,6 @@ impl Builder {
             self.colors.push(color);
         }
         self.indices.extend(order.map(|k| first + k as u32));
-    }
-
-    /// `other`'s triangles added after its own.
-    fn append(&mut self, other: Builder) {
-        let offset = self.positions.len() as u32;
-        self.positions.extend(other.positions);
-        self.normals.extend(other.normals);
-        self.uvs.extend(other.uvs);
-        self.colors.extend(other.colors);
-        self.indices
-            .extend(other.indices.into_iter().map(|index| index + offset));
     }
 
     fn build(self, tile: f32) -> Mesh {
@@ -3934,6 +3954,69 @@ pub mod tests {
                 .all(|p| Vec2::new(p.x, p.z).distance(middle) > 2.0 * grid.tile),
             "smooth ground under the blocks"
         );
+    }
+
+    #[test]
+    fn the_grid_is_cut_in_spans_of_about_a_square_or_of_one_long_cell() {
+        let (_, terrain) = bay();
+        for axis in [&terrain.xs, &terrain.zs] {
+            let spans = spans(axis);
+            // Every cell in one span, in order.
+            assert_eq!(spans.first().unwrap().start, 0);
+            assert_eq!(spans.last().unwrap().end, axis.len() - 1);
+            for pair in spans.windows(2) {
+                assert_eq!(pair[0].end, pair[1].start);
+            }
+            for span in &spans[..spans.len() - 1] {
+                let long = axis[span.end] - axis[span.start];
+                // As long as a square, or longer by less than its last cell;
+                // or of one cell longer than that, far off.
+                let last = axis[span.end] - axis[span.end - 1];
+                assert!(long >= CHUNK - 1e-3, "{long} m");
+                assert!(long < CHUNK + last || span.len() == 1, "{long} m");
+            }
+        }
+        let one = spans(&[0.0, 1.0]);
+        assert_eq!((one.len(), one[0].clone()), (1, 0..1));
+        assert!(spans(&[0.0]).is_empty());
+    }
+
+    #[test]
+    fn the_smooth_ground_comes_in_squares_each_of_one_kind() {
+        let (_, terrain) = bay();
+        let meshes = terrain.meshes(4);
+        assert!(meshes.iter().all(|mesh| mesh.plain.is_none()));
+        let grass = meshes
+            .iter()
+            .filter(|mesh| mesh.ground == Ground::Grass && mesh.flowers.is_none())
+            .count();
+        assert!(grass > 4, "{grass} squares of grass");
+        // None empty; those in the fine part of the grid no wider than a
+        // square and a cell.
+        let (fine_low, fine_high) = terrain.fine;
+        for mesh in &meshes {
+            assert!(mesh.mesh.count_vertices() > 0);
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
+                mesh.mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+            else {
+                panic!("no positions");
+            };
+            let (low, high) =
+                positions
+                    .iter()
+                    .fold((Vec2::INFINITY, Vec2::NEG_INFINITY), |(low, high), p| {
+                        (
+                            low.min(Vec2::new(p[0], p[2])),
+                            high.max(Vec2::new(p[0], p[2])),
+                        )
+                    });
+            if low.cmpge(fine_low).all() && high.cmple(fine_high).all() {
+                assert!(
+                    (high - low).max_element() <= CHUNK + FINE_SPACING + 1e-3,
+                    "{low} to {high}"
+                );
+            }
+        }
     }
 
     #[test]
