@@ -533,6 +533,8 @@ enum GraphicsItem {
     GrassTiling,
     /// The sea mirroring, or the cartoon one.
     Water,
+    /// Whether the picture blurs out from the middle at speed.
+    SpeedBlur,
     /// The page of what the performance HUD shows: the frame rate, the
     /// pixels the world is drawn at and where the player is on the map.
     PerformanceHud,
@@ -734,6 +736,7 @@ fn graphics_items(page: Option<Page>) -> Vec<GraphicsItem> {
         GraphicsItem::FlatAtSpeed,
         GraphicsItem::GrassTiling,
         GraphicsItem::Water,
+        GraphicsItem::SpeedBlur,
         GraphicsItem::PerformanceHud,
         GraphicsItem::Advanced,
     ]);
@@ -1045,6 +1048,7 @@ fn section_is_default(
                         settings.grass_tiling,
                     ),
                     settings.cartoon_water,
+                    settings.speed_blur,
                 )
             };
             window(settings) == window(first)
@@ -1140,6 +1144,7 @@ fn reset_section(
             settings.flat_at_speed = first.flat_at_speed;
             settings.grass_tiling = first.grass_tiling;
             settings.cartoon_water = first.cartoon_water;
+            settings.speed_blur = first.speed_blur;
             reset_performance_hud(settings, first);
             reset_advanced(settings, first);
         }
@@ -1576,6 +1581,10 @@ fn use_options_menu(
                 }
                 GraphicsItem::Water if change != 0 => {
                     settings.cartoon_water = !settings.cartoon_water;
+                    sounds.write(MenuSound::Move);
+                }
+                GraphicsItem::SpeedBlur if change != 0 => {
+                    settings.speed_blur = !settings.speed_blur;
                     sounds.write(MenuSound::Move);
                 }
                 GraphicsItem::ShowFps if change != 0 => {
@@ -2393,6 +2402,13 @@ fn show_options_menu(
                         },
                         settings.road_relief,
                     ),
+                    GraphicsItem::SpeedBlur => Row::check(
+                        match lang {
+                            Language::Spanish => "Desenfoque de velocidad",
+                            Language::English => "Speed blur",
+                        },
+                        settings.speed_blur,
+                    ),
                     GraphicsItem::FlatAtSpeed => Row::check(
                         match lang {
                             Language::Spanish => "Sin relieve a alta velocidad",
@@ -3207,6 +3223,7 @@ mod tests {
             show_textures: true,
             show_keyboard_curves: true,
             cartoon_water: true,
+            speed_blur: false,
             ..default()
         };
         let mut debug = DebugOptions::default();
@@ -3220,7 +3237,7 @@ mod tests {
         // The water is on Graphics' own list: its Reset puts it back.
         assert!(!section_is_default(graphics, None, &settings, &debug));
         reset_section(graphics, None, &mut settings, &mut debug);
-        assert!(!settings.cartoon_water);
+        assert!(!settings.cartoon_water && settings.speed_blur);
         assert!(section_is_default(graphics, None, &settings, &debug));
     }
 

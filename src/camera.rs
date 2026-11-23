@@ -10,6 +10,8 @@
 //! come in ([`Watching`]), and then the shots of them riding on, cutting
 //! from one to the next, over the whole screen in split screen too.
 
+pub mod speed_blur;
+
 use std::ops::Range;
 
 use bevy::camera::{CameraUpdateSystems, RenderTarget, Viewport};
@@ -102,6 +104,7 @@ impl Plugin for ChaseCameraPlugin {
                 start_glide,
             );
         }
+        app.add_plugins(speed_blur::SpeedBlurPlugin);
         app.insert_resource(ClearColor(HORIZON))
             .add_systems(Startup, spawn_camera)
             .add_systems(PostUpdate, follow_window_size.before(CameraUpdateSystems))
@@ -128,6 +131,7 @@ impl Plugin for ChaseCameraPlugin {
 pub struct CameraPlayer(pub usize);
 
 #[derive(Component, Default)]
+#[require(speed_blur::SpeedBlur)]
 struct ChaseCamera {
     /// Orientación actual de la cámara; `None` hasta el primer fotograma.
     yaw: Option<f32>,
@@ -147,6 +151,13 @@ struct ChaseCamera {
     /// for how fast it turns.
     lead: f32,
     last_yaw: Option<f32>,
+    /// The bike's speed, a share of its top speed, where it is, and which
+    /// way the road goes on ahead of it as the camera looks (a unit
+    /// vector, zero until it is followed): for its speed blur (see
+    /// [`speed_blur`]).
+    speed: f32,
+    bike: Vec3,
+    ahead: Vec3,
 }
 
 /// El stick derecho del mando que más se esté moviendo (x a la derecha, y
@@ -628,6 +639,12 @@ fn follow_player(
         );
         transform.translation = position;
         transform.look_at(look_at, up);
+        // The way ahead: where it looks, but level with the bike's road.
+        let up = up.normalize_or(Vec3::Y);
+        let toward = look_at - position;
+        chase.ahead = (toward - up * toward.dot(up)).normalize_or_zero();
+        chase.bike = bike_transform.translation;
+        chase.speed = speed / tuning.max_speed;
 
         if let Projection::Perspective(perspective) = projection.as_mut() {
             perspective.fov = FOV.start.lerp(FOV.end, speed_factor);
