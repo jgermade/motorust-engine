@@ -378,12 +378,45 @@ impl VoxelGrid {
         let local = ((point - self.origin) / self.tile).floor();
         self.blocks[local.y as usize * self.across + local.x as usize]
     }
+
+    /// How many tiles along each side a square of the blocks has (see
+    /// [`Plain`]).
+    fn chunk_tiles(&self) -> usize {
+        ((CHUNK / self.tile).round() as usize).max(1)
+    }
+
+    /// The squares of the blocks (see [`Plain`]), by rows: the columns and
+    /// the rows of tiles of each.
+    fn chunks(&self) -> Vec<(std::ops::Range<usize>, std::ops::Range<usize>)> {
+        let side = self.chunk_tiles();
+        let span = |count: usize, first: usize| first..(first + side).min(count);
+        (0..self.down)
+            .step_by(side)
+            .flat_map(|row| {
+                (0..self.across)
+                    .step_by(side)
+                    .map(move |column| (span(self.across, column), span(self.down, row)))
+            })
+            .collect()
+    }
+
+    /// Which square of the blocks `point` is in (see [`Self::chunks`]),
+    /// the nearest if it is off the grid.
+    fn chunk_at(&self, point: Vec2) -> usize {
+        let side = self.chunk_tiles();
+        let (across, down) = (self.across.div_ceil(side), self.down.div_ceil(side));
+        let local = ((point - self.origin) / (self.tile * side as f32)).floor();
+        let column = (local.x.max(0.0) as usize).min(across.saturating_sub(1));
+        let row = (local.y.max(0.0) as usize).min(down.saturating_sub(1));
+        row * across + column
+    }
 }
 
-/// A piece of the ground in the world: one of its meshes, each over the
-/// whole circuit (see [`Terrain::meshes`]). The benchmark takes it out of
-/// the sun's shadows for a turn, to see what drawing all of it into every
-/// cascade costs (see [`crate::bench`]).
+/// A piece of the ground in the world: one of its meshes (see
+/// [`Terrain::meshes`]), over the whole circuit, or, for the blocks drawn
+/// as voxels, over a square of it. The benchmark takes it out of the sun's
+/// shadows for a turn, to see what drawing it into every cascade costs (see
+/// [`crate::bench`]).
 #[derive(Component)]
 pub struct GroundPiece;
 
@@ -396,10 +429,27 @@ pub struct GroundMesh {
     /// The layers it is drawn on, on a circuit split between the Earth and
     /// the Moon (see [`super::realm`]); otherwise the default one.
     pub layers: Option<RenderLayers>,
-    /// Whether it is drawn in its colours alone, with no texture: the
-    /// ground's blocks, drawn as voxels.
-    pub plain: bool,
+    /// What of the ground drawn as voxels it is, drawn in its colours
+    /// alone, with no texture (and with no texture coordinates); `None` for
+    /// the ground drawn with its textures.
+    pub plain: Option<Plain>,
 }
+
+/// What of the ground drawn as voxels a plain [`GroundMesh`] is: each a
+/// square [`CHUNK`] metres or so on a side, so that the cameras and the
+/// sun's shadow cascades draw only the squares they reach, not the whole
+/// circuit's blocks (millions of corners) in every pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Plain {
+    /// The blocks.
+    Blocks,
+    /// The flat verges beside the roads (see [`Verge`]).
+    Verges,
+}
+
+/// About how long a side of each square of the blocks is (m): see
+/// [`Plain`]; a whole number of the grid's tiles.
+const CHUNK: f32 = 128.0;
 
 impl Terrain {
     /// The terrain of a circuit, worked out on every core.
@@ -1089,7 +1139,7 @@ impl Terrain {
             flowers,
             mesh,
             layers: layers.clone(),
-            plain: false,
+            plain: None,
         };
         let mut meshes = vec![
             ground(Ground::Grass, None, grass.build(grass_tile)),
@@ -1103,25 +1153,39 @@ impl Terrain {
                 .map(|(kind, meadow)| ground(Ground::Grass, Some(kind), meadow.build(GRASS_TILE))),
         );
         if let Some(grid) = self.voxel.as_ref().filter(|_| side.is_none()) {
-            let rows: Vec<usize> = (0..grid.down).collect();
-            let mut pieces = on_cores(&rows, threads, |rows| {
-                rows.iter()
-                    .map(|&row| (row, self.voxel_row(grid, row, &normals, style)))
+            // Dealt out to the threads in turn, as the bands are, so that
+            // each gets some of the squares dense with the smallest blocks.
+            let chunks = grid.chunks();
+            let threads = threads.clamp(1, chunks.len().max(1));
+            let order: Vec<usize> = (0..threads)
+                .flat_map(|first| (first..chunks.len()).step_by(threads))
+                .collect();
+            let mut pieces = on_cores(&order, threads, |part| {
+                part.iter()
+                    .map(|&chunk| {
+                        let (columns, rows) = &chunks[chunk];
+                        let builder =
+                            self.voxel_chunk(grid, columns.clone(), rows.clone(), &normals, style);
+                        (chunk, builder)
+                    })
                     .collect()
             });
-            pieces.sort_by_key(|(row, _)| *row);
-            let mut blocks = Builder::default();
-            for (_, piece) in pieces {
-                blocks.append(piece);
-            }
-            meshes.push(GroundMesh {
-                plain: true,
-                ..ground(Ground::Grass, None, blocks.build(1.0))
-            });
-            meshes.push(GroundMesh {
-                plain: true,
-                ..ground(Ground::Grass, None, self.verge_mesh(grid).build(1.0))
-            });
+            pieces.sort_by_key(|(chunk, _)| *chunk);
+            let plain = |kind: Plain, builder: Builder| GroundMesh {
+                plain: Some(kind),
+                ..ground(Ground::Grass, None, builder.build_plain())
+            };
+            meshes.extend(
+                pieces
+                    .into_iter()
+                    .filter(|(_, builder)| !builder.indices.is_empty())
+                    .map(|(_, builder)| plain(Plain::Blocks, builder)),
+            );
+            meshes.extend(
+                self.verge_meshes(grid)
+                    .into_iter()
+                    .map(|builder| plain(Plain::Verges, builder)),
+            );
         }
         meshes
     }
@@ -1262,12 +1326,16 @@ impl Terrain {
     }
 
     /// The verges beside the roads (see [`Verge`]), with the sheer drop of
-    /// their outer edges.
-    fn verge_mesh(&self, grid: &VoxelGrid) -> Builder {
-        let mut builder = Builder::default();
+    /// their outer edges, by the squares of the blocks they lie in (see
+    /// [`Plain`]), those with none left out.
+    fn verge_meshes(&self, grid: &VoxelGrid) -> Vec<Builder> {
+        let mut builders: Vec<Builder> = Vec::new();
+        builders.resize_with(grid.chunks().len().max(1), Builder::default);
         for verge in &grid.verges {
+            let at = (verge.corners[0] + verge.corners[3]) / 2.0;
+            let builder = &mut builders[grid.chunk_at(Vec2::new(at.x, at.z))];
             let (top, side) = self.verge_colors(grid, verge.beside, verge.band);
-            voxel_quad(&mut builder, verge.corners, Vec3::Y, [top; 4]);
+            voxel_quad(builder, verge.corners, Vec3::Y, [top; 4]);
             if let Some(facing) = verge.edge {
                 let (a, b) = (verge.corners[2], verge.corners[3]);
                 let drop = Vec3::Y * VERGE_DROP;
@@ -1281,29 +1349,32 @@ impl Terrain {
                 let times = |light: f32| [red * light, green * light, blue * light, alpha];
                 let (lit, foot) = (times(face), times(face * VOXEL_FOOT));
                 voxel_quad(
-                    &mut builder,
+                    builder,
                     [a - drop, a, b - drop, b],
                     facing,
                     [foot, lit, foot, lit],
                 );
             }
         }
-        builder
+        builders.retain(|builder| !builder.indices.is_empty());
+        builders
     }
 
-    /// The blocks of row `row` of the grid's tiles: each column's top, and
-    /// its sides where the ground next to it stands lower, a face for each
-    /// stretch of its side as long as the smaller of its blocks and its
-    /// neighbour's, down to the neighbour's top, so that no gap opens where
-    /// blocks of two sizes meet.
-    fn voxel_row(
+    /// The blocks of a square of the grid's tiles (see [`Plain`]), those in
+    /// `columns` of the rows `rows`: each column's top, merged with its
+    /// neighbours' alike (see [`merge_tops`]), and its sides where the ground
+    /// next to it stands lower, a face for each stretch of its side as long
+    /// as the smaller of its blocks and its neighbour's, down to the
+    /// neighbour's top, so that no gap opens where blocks of two sizes meet.
+    fn voxel_chunk(
         &self,
         grid: &VoxelGrid,
-        row: usize,
+        columns: std::ops::Range<usize>,
+        rows: std::ops::Range<usize>,
         normals: &[Vec3],
         style: Option<Realm>,
     ) -> Builder {
-        let mut builder = Builder::default();
+        let (mut builder, mut tops) = (Builder::default(), Vec::new());
         let mut quad = |corners: [Vec3; 4], normal: Vec3, colors: [[f32; 4]; 4]| {
             voxel_quad(&mut builder, corners, normal, colors);
         };
@@ -1311,7 +1382,7 @@ impl Terrain {
             let [r, g, b, a] = color;
             [r * light, g * light, b * light, a]
         };
-        for i in 0..grid.across {
+        for (row, i) in rows.flat_map(|row| columns.clone().map(move |i| (row, i))) {
             let tile = grid.origin + Vec2::new(i as f32, row as f32) * grid.tile;
             let block = grid.blocks[row * grid.across + i];
             let count = (grid.tile / block).round() as usize;
@@ -1323,16 +1394,13 @@ impl Terrain {
                     let (color, side) = self.voxel_colors(grid, middle, normals, style);
                     let at = |x: f32, z: f32, y: f32| Vec3::new(x, y, z);
                     let (x0, z0, x1, z1) = (corner.x, corner.y, corner.x + block, corner.y + block);
-                    quad(
-                        [
-                            at(x0, z0, top),
-                            at(x0, z1, top),
-                            at(x1, z0, top),
-                            at(x1, z1, top),
-                        ],
-                        Vec3::Y,
-                        [color; 4],
-                    );
+                    // Its top, merged with its neighbours' afterwards.
+                    tops.push(Top {
+                        block,
+                        cell: (corner / block).round().as_ivec2(),
+                        top,
+                        color,
+                    });
                     // Its four sides: from where to where along each, and which
                     // way it faces.
                     let sides = [
@@ -1375,6 +1443,7 @@ impl Terrain {
                 }
             }
         }
+        merge_tops(tops, &mut builder);
         builder
     }
 }
@@ -1390,6 +1459,9 @@ pub fn spawn_terrain(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
+    // The blocks, in their colours alone: one material for all their
+    // squares.
+    let mut blocks: Option<Handle<StandardMaterial>> = None;
     for GroundMesh {
         ground,
         flowers,
@@ -1401,16 +1473,20 @@ pub fn spawn_terrain(
         if mesh.count_vertices() == 0 {
             continue;
         }
-        if plain {
-            // The blocks, in their colours alone.
+        if plain.is_some() {
+            let material = blocks
+                .get_or_insert_with(|| {
+                    materials.add(StandardMaterial {
+                        perceptual_roughness: 0.92,
+                        reflectance: 0.12,
+                        ..default()
+                    })
+                })
+                .clone();
             let mut piece = world.spawn((
                 GroundPiece,
                 Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    perceptual_roughness: 0.92,
-                    reflectance: 0.12,
-                    ..default()
-                })),
+                MeshMaterial3d(material),
             ));
             if let Some(layers) = layers {
                 piece.insert(layers);
@@ -2204,6 +2280,83 @@ fn verges(track: &Track, scenery: &Scenery) -> Vec<Verge> {
     verges
 }
 
+/// The top of a column of the ground's blocks, before it is merged with
+/// its neighbours' (see [`merge_tops`]).
+struct Top {
+    /// How big its blocks are (m).
+    block: f32,
+    /// Its corner (x, z), in blocks of its size from the world's origin.
+    cell: IVec2,
+    /// Its height, and its colour.
+    top: f32,
+    color: [f32; 4],
+}
+
+/// The tops of the columns of blocks `tops` added to `builder`, those side
+/// by side of the same size, at the same height and of the same colour
+/// merged into as few rectangles as a greedy sweep finds: row by row, each
+/// top not yet taken grown along its row as far as the same go on, then
+/// down as far as the whole run of the next row is the same. With the
+/// colours cut to a few shades, most of the tops far from the roads go into
+/// a few big quads.
+fn merge_tops(mut tops: Vec<Top>, builder: &mut Builder) {
+    tops.sort_by(|a, b| {
+        a.block
+            .total_cmp(&b.block)
+            .then(a.cell.y.cmp(&b.cell.y))
+            .then(a.cell.x.cmp(&b.cell.x))
+    });
+    let same = |a: &Top, b: &Top| a.top == b.top && a.color == b.color;
+    let mut taken = vec![false; tops.len()];
+    let mut start = 0;
+    while start < tops.len() {
+        // The tops of one size of blocks.
+        let block = tops[start].block;
+        let end = start + tops[start..].partition_point(|top| top.block == block);
+        let index_at: std::collections::HashMap<IVec2, usize> = (start..end)
+            .map(|index| (tops[index].cell, index))
+            .collect();
+        let free = |cell: IVec2, first: &Top, taken: &[bool]| match index_at.get(&cell) {
+            Some(&index) => !taken[index] && same(&tops[index], first),
+            None => false,
+        };
+        for index in start..end {
+            if taken[index] {
+                continue;
+            }
+            let first = &tops[index];
+            let mut wide = 1;
+            while free(first.cell + IVec2::new(wide, 0), first, &taken) {
+                wide += 1;
+            }
+            let mut long = 1;
+            while (0..wide).all(|dx| free(first.cell + IVec2::new(dx, long), first, &taken)) {
+                long += 1;
+            }
+            for dz in 0..long {
+                for dx in 0..wide {
+                    taken[index_at[&(first.cell + IVec2::new(dx, dz))]] = true;
+                }
+            }
+            let low = first.cell.as_vec2() * block;
+            let high = (first.cell + IVec2::new(wide, long)).as_vec2() * block;
+            let at = |x: f32, z: f32| Vec3::new(x, first.top, z);
+            voxel_quad(
+                builder,
+                [
+                    at(low.x, low.y),
+                    at(low.x, high.y),
+                    at(high.x, low.y),
+                    at(high.x, high.y),
+                ],
+                Vec3::Y,
+                [first.color; 4],
+            );
+        }
+        start = end;
+    }
+}
+
 /// How light the sides of the ground's blocks are, by the way they face,
 /// against their tops, as a voxel world shades them whatever the sun: the
 /// east and the south a little darker, the west and the north more.
@@ -2236,9 +2389,7 @@ fn voxel_quad(builder: &mut Builder, corners: [Vec3; 4], normal: Vec3, colors: [
     } else {
         [0, 2, 1, 2, 3, 1]
     };
-    for k in order {
-        builder.push(None, || (corners[k], normal, Vec2::ZERO, colors[k]));
-    }
+    builder.quad(corners, normal, colors, order);
 }
 
 /// How light the foot of a block's side is against its top edge (see
@@ -2850,6 +3001,20 @@ impl Builder {
         }
     }
 
+    /// A quad of four corners of its own, each with its colour and no
+    /// texture coordinates (see [`Self::build_plain`]), as two triangles of
+    /// them in `order`: four corners shared by its two triangles rather than
+    /// six.
+    fn quad(&mut self, corners: [Vec3; 4], normal: Vec3, colors: [[f32; 4]; 4], order: [usize; 6]) {
+        let first = self.positions.len() as u32;
+        for (corner, color) in corners.into_iter().zip(colors) {
+            self.positions.push(corner.to_array());
+            self.normals.push(normal.to_array());
+            self.colors.push(color);
+        }
+        self.indices.extend(order.map(|k| first + k as u32));
+    }
+
     /// `other`'s triangles added after its own.
     fn append(&mut self, other: Builder) {
         let offset = self.positions.len() as u32;
@@ -2863,19 +3028,37 @@ impl Builder {
 
     fn build(self, tile: f32) -> Mesh {
         let uvs: Vec<[f32; 2]> = self.uvs.iter().map(|[u, v]| [u / tile, v / tile]).collect();
-        // Kept in the main world too where the map editor may shape it
-        // in place (see `crate::editor`).
+        Self::empty_mesh()
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
+            .with_inserted_indices(Indices::U32(self.indices))
+    }
+
+    /// The mesh of what is drawn in its colours alone, with no texture
+    /// coordinates: the ground's blocks (see [`Self::quad`]).
+    fn build_plain(self) -> Mesh {
+        debug_assert!(
+            self.uvs.is_empty(),
+            "plain meshes take no texture coordinates"
+        );
+        Self::empty_mesh()
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
+            .with_inserted_indices(Indices::U32(self.indices))
+    }
+
+    /// A mesh of triangles with nothing in it yet, kept in the main world
+    /// too where the map editor may shape it in place (see `crate::editor`).
+    fn empty_mesh() -> Mesh {
         let usage = if crate::editor::available() {
             RenderAssetUsages::default()
         } else {
             RenderAssetUsages::RENDER_WORLD
         };
         Mesh::new(PrimitiveTopology::TriangleList, usage)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
-            .with_inserted_indices(Indices::U32(self.indices))
     }
 }
 
@@ -3681,13 +3864,44 @@ pub mod tests {
             Some(bevy::mesh::VertexAttributeValues::Float32x3(values)) => values.clone(),
             other => panic!("{other:?}"),
         };
-        let plain: Vec<&GroundMesh> = meshes.iter().filter(|mesh| mesh.plain).collect();
-        // The blocks, then the verges.
-        assert_eq!(plain.len(), 2);
-        let blocks = &plain[0].mesh;
-        let positions = attribute(blocks, Mesh::ATTRIBUTE_POSITION);
-        let normals = attribute(blocks, Mesh::ATTRIBUTE_NORMAL);
+        // The blocks in squares, each drawn apart, then the verges.
+        let blocks: Vec<&Mesh> = meshes
+            .iter()
+            .filter(|mesh| mesh.plain == Some(Plain::Blocks))
+            .map(|mesh| &mesh.mesh)
+            .collect();
+        let verges = meshes
+            .iter()
+            .filter(|mesh| mesh.plain == Some(Plain::Verges))
+            .count();
+        assert!(blocks.len() > 1 && verges > 0, "{} squares", blocks.len());
+        let side = grid.tile * grid.chunk_tiles() as f32;
         let (mut tops, mut sides) = (0, 0);
+        for mesh in &blocks {
+            // Of a square's tiles, sides and all.
+            let positions = attribute(mesh, Mesh::ATTRIBUTE_POSITION);
+            let (low, high) =
+                positions
+                    .iter()
+                    .fold((Vec2::INFINITY, Vec2::NEG_INFINITY), |(low, high), p| {
+                        (
+                            low.min(Vec2::new(p[0], p[2])),
+                            high.max(Vec2::new(p[0], p[2])),
+                        )
+                    });
+            assert!((high - low).max_element() <= side + 1e-3, "{low} to {high}");
+            // Drawn in colours alone, four corners a quad.
+            assert!(mesh.attribute(Mesh::ATTRIBUTE_UV_0).is_none());
+            assert_eq!(mesh.count_vertices() * 3, mesh.indices().unwrap().len() * 2);
+        }
+        let positions: Vec<[f32; 3]> = blocks
+            .iter()
+            .flat_map(|mesh| attribute(mesh, Mesh::ATTRIBUTE_POSITION))
+            .collect();
+        let normals: Vec<[f32; 3]> = blocks
+            .iter()
+            .flat_map(|mesh| attribute(mesh, Mesh::ATTRIBUTE_NORMAL))
+            .collect();
         for (p, n) in positions.iter().zip(&normals) {
             let (p, n) = (Vec3::from_array(*p), Vec3::from_array(*n));
             // At a whole number of the smallest blocks, up and across.
@@ -3707,7 +3921,7 @@ pub mod tests {
         // The smooth ground is left out under the blocks, but past them.
         let smooth: Vec<Vec3> = meshes
             .iter()
-            .filter(|mesh| !mesh.plain)
+            .filter(|mesh| mesh.plain.is_none())
             .flat_map(|mesh| attribute(&mesh.mesh, Mesh::ATTRIBUTE_POSITION))
             .map(Vec3::from_array)
             .collect();
@@ -3720,6 +3934,57 @@ pub mod tests {
                 .all(|p| Vec2::new(p.x, p.z).distance(middle) > 2.0 * grid.tile),
             "smooth ground under the blocks"
         );
+    }
+
+    #[test]
+    fn the_blocks_tops_merge_where_side_by_side_at_one_height_and_colour() {
+        let green = [0.1, 0.5, 0.1, 1.0];
+        let quads = |tops: Vec<Top>| {
+            let mut builder = Builder::default();
+            merge_tops(tops, &mut builder);
+            builder.indices.len() / 6
+        };
+        let top = |block: f32, x: i32, z: i32, top: f32, color: [f32; 4]| Top {
+            block,
+            cell: IVec2::new(x, z),
+            top,
+            color,
+        };
+        let square = |height: &dyn Fn(i32, i32) -> f32, color: &dyn Fn(i32, i32) -> [f32; 4]| {
+            (0..4)
+                .flat_map(|z| (0..4).map(move |x| (x, z)))
+                .map(|(x, z)| top(1.0, x, z, height(x, z), color(x, z)))
+                .collect::<Vec<_>>()
+        };
+        // All alike: one quad over the four by four, its corners theirs.
+        let mut builder = Builder::default();
+        merge_tops(square(&|_, _| 2.0, &|_, _| green), &mut builder);
+        assert_eq!(builder.indices.len(), 6);
+        let (low, high) = builder.positions.iter().fold(
+            (Vec3::INFINITY, Vec3::NEG_INFINITY),
+            |(low, high), p| {
+                (
+                    low.min(Vec3::from_array(*p)),
+                    high.max(Vec3::from_array(*p)),
+                )
+            },
+        );
+        assert_eq!(
+            (low, high),
+            (Vec3::new(0.0, 2.0, 0.0), Vec3::new(4.0, 2.0, 4.0))
+        );
+        // Two heights, a half each: two quads.
+        assert_eq!(
+            quads(square(&|x, _| if x < 2 { 1.0 } else { 2.0 }, &|_, _| green)),
+            2
+        );
+        // A checkerboard of two colours: none merged.
+        let red = [0.5, 0.1, 0.1, 1.0];
+        let checkered = |x: i32, z: i32| if (x + z) % 2 == 0 { green } else { red };
+        assert_eq!(quads(square(&|_, _| 2.0, &checkered)), 16);
+        // Blocks of two sizes never merged together, even side by side.
+        let mixed = vec![top(1.0, 0, 0, 2.0, green), top(2.0, 1, 0, 2.0, green)];
+        assert_eq!(quads(mixed), 2);
     }
 
     #[test]
@@ -3754,12 +4019,14 @@ pub mod tests {
         assert!(fewer * 10 > more * 9, "{bands:?}");
         // Meshed, its top flat-lit as the blocks' tops, its edges dropping.
         let meshes = terrain.meshes(4);
-        let verges = &meshes.iter().filter(|mesh| mesh.plain).nth(1).unwrap().mesh;
-        let Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)) =
-            verges.attribute(Mesh::ATTRIBUTE_NORMAL)
-        else {
-            panic!("no normals");
-        };
+        let normals: Vec<[f32; 3]> = meshes
+            .iter()
+            .filter(|mesh| mesh.plain == Some(Plain::Verges))
+            .flat_map(|mesh| match mesh.mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
+                Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)) => normals.clone(),
+                _ => panic!("no normals"),
+            })
+            .collect();
         let tops = normals.iter().filter(|n| **n == [0.0, 1.0, 0.0]).count();
         let edges = normals.iter().filter(|n| n[1] == 0.0).count();
         assert!(tops > 0 && edges > 0 && tops + edges == normals.len());

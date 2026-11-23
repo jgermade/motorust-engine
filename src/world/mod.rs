@@ -325,6 +325,10 @@ fn prepare(
     // The tangents of what is drawn with relief, here rather than on the
     // main thread as it is put in the world.
     for piece in &mut ground {
+        // The blocks, drawn as voxels, have no texture.
+        if piece.plain.is_some() {
+            continue;
+        }
         // The grass in flower has the lawn's.
         let texture = match piece.flowers {
             Some(_) => Some(&textures.grass),

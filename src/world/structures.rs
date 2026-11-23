@@ -153,7 +153,7 @@ pub fn structure_pieces(
             flowers: Some(kind),
             mesh: meadow,
             layers: None,
-            plain: false,
+            plain: None,
         }));
         let rock = match scenery.soil {
             Soil::Rock | Soil::Mine | Soil::Floor => StandardMaterial {
