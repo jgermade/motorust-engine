@@ -71,6 +71,8 @@ pub struct Context {
     pub grass_tiling: String,
     /// Whether the picture blurs at speed.
     pub speed_blur: bool,
+    /// Whether the props far away are drawn lighter.
+    pub far_props: bool,
     /// The performance forced: off, or the frame rate it keeps.
     pub performance: String,
     /// The sea: mirroring or the cartoon one.
@@ -91,7 +93,7 @@ impl Context {
     fn pairs(&self) -> String {
         format!(
             "state={} mode={} players={} paused={} track={:?} trees={} lighter_far_trees={} \
-             lighter_split_screen={} force_performance={} water={} shadows={} antialiasing={} relief={} road_relief={} flat_at_speed={} grass_tiling={} speed_blur={} render_scale={} render={} fps_limit={} \
+             lighter_far_props={} lighter_split_screen={} force_performance={} water={} shadows={} antialiasing={} relief={} road_relief={} flat_at_speed={} grass_tiling={} speed_blur={} render_scale={} render={} fps_limit={} \
              resolution={} fullscreen={} pipelined_rendering={} frame_latency={} window={} ui_scale={:.2}",
             self.state,
             self.mode,
@@ -100,6 +102,7 @@ impl Context {
             self.track,
             self.trees,
             self.far_trees,
+            self.far_props,
             self.split_detail,
             self.performance,
             self.water,
@@ -628,6 +631,7 @@ fn log_performance(
         flat_at_speed: settings.flat_at_speed,
         grass_tiling: format!("{:?}", settings.grass_tiling),
         speed_blur: settings.speed_blur,
+        far_props: settings.lighter_far_props,
         // As the options say, or as far as the performance forced has come.
         render_scale: render_percent(detail.as_deref()),
         render: window.map_or_else(

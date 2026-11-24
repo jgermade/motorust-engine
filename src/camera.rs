@@ -11,6 +11,7 @@
 //! from one to the next, over the whole screen in split screen too.
 
 pub mod speed_blur;
+pub mod warm_up;
 
 use std::ops::Range;
 
@@ -104,7 +105,7 @@ impl Plugin for ChaseCameraPlugin {
                 start_glide,
             );
         }
-        app.add_plugins(speed_blur::SpeedBlurPlugin);
+        app.add_plugins((speed_blur::SpeedBlurPlugin, warm_up::WarmUpPlugin));
         app.insert_resource(ClearColor(HORIZON))
             .add_systems(Startup, spawn_camera)
             .add_systems(PostUpdate, follow_window_size.before(CameraUpdateSystems))

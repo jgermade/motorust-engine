@@ -178,6 +178,11 @@ impl Plugin for WorldPlugin {
                         .after(TransformSystems::Propagate)
                         .after(VisibilitySystems::VisibilityPropagate)
                         .before(VisibilitySystems::CheckVisibility),
+                    // So with the props.
+                    prop_pack::dress_props
+                        .after(TransformSystems::Propagate)
+                        .after(VisibilitySystems::VisibilityPropagate)
+                        .before(VisibilitySystems::CheckVisibility),
                 ),
             );
     }
