@@ -4,18 +4,21 @@
 //! them as the first circuit with one of those is built ([`PropPacks`]); and how a prop is placed: where
 //! it stands and which way it faces ([`spot`]), the ground kept clear so
 //! that a landmark is in view from the road ([`in_view`]), and the parts
-//! that turn ([`Turning`]). The engine's: the themes of a game place their
-//! own props with it.
+//! that turn ([`Turning`]); and each piece lighter far away
+//! ([`PropLevels`]). The engine's: the themes of a game place their own
+//! props with it.
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 
+use super::lod;
 use super::mirror::MirrorPoint;
 use super::props::Footprint;
 use super::scenery::{Prop, Spot};
 use crate::bike::model::imported::{read, texture};
 use crate::geometry::forward;
+use crate::settings::Settings;
 use crate::track::{Track, WALL_DISTANCE};
 
 /// How fast a wheel turns (rad/s).
@@ -26,12 +29,115 @@ pub const RIDERS_BACK: f32 = 110.0;
 
 /// A piece of a pack: its mesh and the corners of the box round it, in its
 /// own frame, and points over its faces for the water to mirror it (see
-/// [`surface`]).
+/// [`surface`]); and its lighter meshes, to draw it far away (see
+/// [`Piece::drawn`]).
 pub struct Piece {
     pub mesh: Handle<Mesh>,
     pub low: Vec3,
     pub high: Vec3,
     pub surface: Vec<MirrorPoint>,
+    lighter: [Handle<Mesh>; LEVELS - 1],
+}
+
+impl Piece {
+    /// Its mesh, to spawn it with: the full one near the cameras, the
+    /// lighter ones far from them ([`PropLevels`]).
+    pub fn drawn(&self) -> (Mesh3d, PropLevels) {
+        let [first, second] = self.lighter.clone();
+        (
+            Mesh3d(self.mesh.clone()),
+            PropLevels {
+                meshes: [self.mesh.clone(), first, second],
+                size: (self.high - self.low).max_element(),
+                level: 0,
+            },
+        )
+    }
+}
+
+/// How many meshes each piece has: the full one and two lighter.
+pub const LEVELS: usize = 3;
+/// The share of a piece's triangles each lighter mesh keeps, and the fewest
+/// it keeps (one with as few or fewer stays as it is).
+const LIGHTER: [(usize, usize); LEVELS - 1] = [(4, 48), (12, 24)];
+/// How far from the nearest camera (in times its size: its widest, or
+/// tallest, as it stands) a prop is drawn with each lighter mesh: from
+/// there on it is under about 200 pixels high on a full screen of 1080, and
+/// then 90.
+const LEVEL_DISTANCES: [f32; LEVELS - 1] = [4.0, 10.0];
+
+/// The lighter meshes of a piece's `full` one (see [`LIGHTER`]): the full
+/// one where it would not be lighter.
+fn lighter(full: &Mesh) -> [Option<Mesh>; LEVELS - 1] {
+    let triangles = full.indices().map_or(0, |indices| indices.len() / 3);
+    LIGHTER.map(|(share, fewest)| {
+        let target = (triangles / share).max(fewest);
+        (target < triangles).then(|| lod::simplify_textured(full, target))
+    })
+}
+
+/// A prop drawn lighter far away: its meshes, full first, and the size of
+/// its piece as made (m).
+#[derive(Component, Clone, Debug)]
+pub struct PropLevels {
+    meshes: [Handle<Mesh>; LEVELS],
+    size: f32,
+    level: usize,
+}
+
+impl PropLevels {
+    /// Which of its meshes it is drawn with: 0, the full one, to
+    /// [`LEVELS`] - 1.
+    pub fn level(&self) -> usize {
+        self.level
+    }
+}
+
+/// The props in view with the mesh their distance from the nearest camera
+/// calls for (see [`LEVEL_DISTANCES`]); all whole with Options > Graphics
+/// > lighter far props off.
+pub fn dress_props(
+    settings: Option<Res<Settings>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    mut props: Query<(
+        &mut PropLevels,
+        &GlobalTransform,
+        &InheritedVisibility,
+        &mut Mesh3d,
+    )>,
+) {
+    let lighter = settings
+        .as_deref()
+        .is_none_or(|settings| settings.lighter_far_props);
+    let eyes: Vec<Vec3> = cameras
+        .iter()
+        .filter(|(camera, _)| camera.is_active)
+        .map(|(_, transform)| transform.translation())
+        .collect();
+    props
+        .par_iter_mut()
+        .for_each(|(mut levels, transform, visible, mut mesh)| {
+            if !visible.get() || (!lighter && levels.level == 0) {
+                return;
+            }
+            let level = if !lighter {
+                0
+            } else if eyes.is_empty() {
+                levels.level
+            } else {
+                let at = transform.translation();
+                let distance = eyes
+                    .iter()
+                    .map(|eye| eye.distance(at))
+                    .fold(f32::MAX, f32::min);
+                let size = levels.size * transform.affine().matrix3.x_axis.length();
+                lod::level_at(distance, levels.level, &LEVEL_DISTANCES.map(|k| k * size))
+            };
+            if level != levels.level {
+                levels.level = level;
+                mesh.0 = levels.meshes[level].clone();
+            }
+        });
 }
 
 /// How far apart the points over a prop's faces are, at most (m of the
@@ -140,13 +246,20 @@ impl PropPack {
     ) -> Self {
         let pack = read(bin);
         let atlas = texture(color, true);
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let lighter = super::terrain::on_cores(&pack.meshes, threads, |part| {
+            part.iter().map(|piece| lighter(&piece.mesh)).collect()
+        });
         let pieces = pack
             .meshes
             .into_iter()
-            .map(|piece| {
+            .zip(lighter)
+            .map(|(piece, lighter)| {
                 let (low, high) = bounds(&piece.mesh);
                 let surface = surface(&piece.mesh, &atlas);
                 let mesh = meshes.add(piece.mesh);
+                let lighter = lighter
+                    .map(|light| light.map_or_else(|| mesh.clone(), |light| meshes.add(light)));
                 (
                     piece.name,
                     Piece {
@@ -154,6 +267,7 @@ impl PropPack {
                         low,
                         high,
                         surface,
+                        lighter,
                     },
                 )
             })

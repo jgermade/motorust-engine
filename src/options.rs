@@ -551,6 +551,8 @@ enum GraphicsItem {
     Trees,
     /// Whether the trees far away are drawn with lighter meshes.
     FarTrees,
+    /// Whether the props far away are drawn with lighter meshes.
+    FarProps,
     /// Whether the world is drawn lighter with the screen split.
     SplitDetail,
     /// Whether the frame rate is written to a file (see
@@ -704,6 +706,7 @@ fn graphics_items(page: Option<Page>) -> Vec<GraphicsItem> {
             let mut items = vec![
                 GraphicsItem::Trees,
                 GraphicsItem::FarTrees,
+                GraphicsItem::FarProps,
                 GraphicsItem::SplitDetail,
             ];
             if !WEB {
@@ -800,10 +803,11 @@ fn first_settings() -> &'static Settings {
 }
 
 /// Graphics' advanced options, those of its page.
-fn advanced(settings: &Settings) -> (bool, bool, bool, bool, bool, u32) {
+fn advanced(settings: &Settings) -> (bool, bool, bool, bool, bool, bool, u32) {
     (
         settings.modelled_trees,
         settings.lighter_far_trees,
+        settings.lighter_far_props,
         settings.lighter_split_screen,
         settings.performance_log,
         settings.pipelined_rendering,
@@ -1155,6 +1159,7 @@ fn reset_section(
 fn reset_advanced(settings: &mut Settings, first: &Settings) {
     settings.modelled_trees = first.modelled_trees;
     settings.lighter_far_trees = first.lighter_far_trees;
+    settings.lighter_far_props = first.lighter_far_props;
     settings.lighter_split_screen = first.lighter_split_screen;
     settings.performance_log = first.performance_log;
     settings.pipelined_rendering = first.pipelined_rendering;
@@ -1617,6 +1622,10 @@ fn use_options_menu(
                 }
                 GraphicsItem::FarTrees if change != 0 => {
                     settings.lighter_far_trees = !settings.lighter_far_trees;
+                    sounds.write(MenuSound::Move);
+                }
+                GraphicsItem::FarProps if change != 0 => {
+                    settings.lighter_far_props = !settings.lighter_far_props;
                     sounds.write(MenuSound::Move);
                 }
                 GraphicsItem::SplitDetail if change != 0 => {
@@ -2445,6 +2454,13 @@ fn show_options_menu(
                         },
                         settings.lighter_far_trees,
                     ),
+                    GraphicsItem::FarProps => Row::check(
+                        match lang {
+                            Language::Spanish => "Objetos lejanos más ligeros",
+                            Language::English => "Lighter far props",
+                        },
+                        settings.lighter_far_props,
+                    ),
                     GraphicsItem::SplitDetail => Row::check(
                         match lang {
                             Language::Spanish => "Menos detalle a dos jugadores",
@@ -3050,6 +3066,7 @@ mod tests {
             [
                 GraphicsItem::Trees,
                 GraphicsItem::FarTrees,
+                GraphicsItem::FarProps,
                 GraphicsItem::SplitDetail,
                 GraphicsItem::PerformanceLog,
                 GraphicsItem::PipelinedRendering,

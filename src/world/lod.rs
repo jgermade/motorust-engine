@@ -50,6 +50,23 @@ pub fn simplify(mesh: &Mesh, target: usize) -> Mesh {
     work.mesh()
 }
 
+/// `mesh` (a list of triangles with positions, and any other attributes
+/// of its corners: texture coordinates, normals) as at most `target`
+/// triangles, or as few as it can without turning faces over, as
+/// [`simplify`] does; but each corner left keeps its own attributes as it
+/// was made (where its vertex has moved, the texture stretches with it), so
+/// that it is drawn with the same material and keeps its sharp edges. Its
+/// corners are not shared between faces.
+pub fn simplify_textured(mesh: &Mesh, target: usize) -> Mesh {
+    let source = Source::of(mesh);
+    if source.indices.len() / 3 <= target {
+        return mesh.clone();
+    }
+    let mut work = Work::new(&source);
+    work.collapse_to(target);
+    work.textured(mesh)
+}
+
 /// `mesh`'s texture `image` (8-bit RGBA in sRGB, with its mipmaps; see
 /// [`super::generate_mipmaps`]) painted in its vertices instead, in linear
 /// RGBA: each vertex the average of the triangles round it, each triangle
@@ -272,6 +289,8 @@ struct Work {
     quadrics: Vec<Quadric>,
     versions: Vec<u32>,
     faces: Vec<[usize; 3]>,
+    /// The vertex of the mesh as made at each corner of each face.
+    corners: Vec<[u32; 3]>,
     alive: Vec<bool>,
     left: usize,
     /// The faces round each vertex (some may be gone).
@@ -319,14 +338,14 @@ impl Work {
                 index
             })
             .collect();
-        let faces: Vec<[usize; 3]> = source
+        let (faces, corners): (Vec<[usize; 3]>, Vec<[u32; 3]>) = source
             .indices
             .as_chunks::<3>()
             .0
             .iter()
-            .map(|t| [0, 1, 2].map(|k| welded[t[k] as usize]))
-            .filter(|&[a, b, c]| a != b && b != c && a != c)
-            .collect();
+            .map(|&t| ([0, 1, 2].map(|k| welded[t[k] as usize]), t))
+            .filter(|&([a, b, c], _)| a != b && b != c && a != c)
+            .unzip();
         // Each vertex's quadric: the planes of the faces round it, by their
         // areas; and along an open edge, a plane across it, so the outline
         // keeps its place.
@@ -404,6 +423,7 @@ impl Work {
             quadrics,
             alive: vec![true; faces.len()],
             faces,
+            corners,
             left,
             around,
         }
@@ -609,6 +629,55 @@ impl Work {
     }
 }
 
+impl Work {
+    /// The mesh left, each corner of its faces where its vertex is now,
+    /// with the other attributes of the corner of `made` (the mesh it was
+    /// made from) it was.
+    fn textured(self, made: &Mesh) -> Mesh {
+        let kept: Vec<(usize, u32)> = self
+            .faces
+            .iter()
+            .zip(&self.corners)
+            .zip(&self.alive)
+            .filter(|(_, alive)| **alive)
+            .flat_map(|((face, corners), _)| [0, 1, 2].map(|k| (face[k], corners[k])))
+            .collect();
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            kept.iter()
+                .map(|&(v, _)| self.positions[v].to_array())
+                .collect::<Vec<_>>(),
+        );
+        let corners: Vec<usize> = kept.iter().map(|&(_, corner)| corner as usize).collect();
+        for (attribute, values) in made.attributes() {
+            if attribute.id == Mesh::ATTRIBUTE_POSITION.id {
+                continue;
+            }
+            if let Some(picked) = pick(values, &corners) {
+                mesh.insert_attribute(*attribute, picked);
+            }
+        }
+        mesh.with_inserted_indices(Indices::U32((0..kept.len() as u32).collect()))
+    }
+}
+
+/// The values of `values` at `at`, in that order (those of the kinds the
+/// meshes made with Meshy have).
+fn pick(values: &VertexAttributeValues, at: &[usize]) -> Option<VertexAttributeValues> {
+    use VertexAttributeValues as V;
+    Some(match values {
+        V::Float32x2(v) => V::Float32x2(at.iter().map(|&i| v[i]).collect()),
+        V::Float32x3(v) => V::Float32x3(at.iter().map(|&i| v[i]).collect()),
+        V::Float32x4(v) => V::Float32x4(at.iter().map(|&i| v[i]).collect()),
+        V::Uint16x4(v) => V::Uint16x4(at.iter().map(|&i| v[i]).collect()),
+        _ => return None,
+    })
+}
+
 /// The fewest faces a part of a mesh is left with: a triangle seen from
 /// either side, so that a clump of leaves far away thins out but stays.
 const LEAST_OF_A_PART: usize = 2;
@@ -691,6 +760,52 @@ mod tests {
                 assert!((n.length() - 1.0).abs() < 1e-3);
                 assert!(n.dot(p.normalize()) > 0.7, "{p}: {n}");
             }
+        }
+    }
+
+    #[test]
+    fn a_lighter_textured_mesh_keeps_the_texture_of_each_corner_as_made() {
+        // Each triangle its own corners, as Meshy makes them, with a second
+        // set of texture coordinates.
+        let mut full = Sphere::new(2.0).mesh().ico(7).unwrap();
+        full.duplicate_vertices();
+        let corners = full.count_vertices();
+        let second: Vec<[f32; 2]> = (0..corners).map(|i| [i as f32, 0.5]).collect();
+        full.insert_attribute(Mesh::ATTRIBUTE_UV_1, second);
+        full.insert_indices(Indices::U32((0..corners as u32).collect()));
+        let uvs = |mesh: &Mesh, attribute| match mesh.attribute(attribute) {
+            Some(VertexAttributeValues::Float32x2(uvs)) => uvs.clone(),
+            _ => panic!("no texture coordinates"),
+        };
+        let made: Vec<_> = uvs(&full, Mesh::ATTRIBUTE_UV_0)
+            .into_iter()
+            .zip(uvs(&full, Mesh::ATTRIBUTE_UV_1))
+            .collect();
+        for target in [300, 60] {
+            let light = simplify_textured(&full, target);
+            let count = triangles(&light);
+            assert!(count <= target && count >= target / 4, "{target}: {count}");
+            assert_eq!(light.count_vertices(), count * 3);
+            // Each corner as one of those made, both its coordinates.
+            let kept = uvs(&light, Mesh::ATTRIBUTE_UV_0)
+                .into_iter()
+                .zip(uvs(&light, Mesh::ATTRIBUTE_UV_1));
+            for corner in kept {
+                assert!(made.contains(&corner), "{corner:?}");
+            }
+            // Its normals as made: out, of length one.
+            let source = Source::of(&light);
+            for (p, n) in source
+                .positions
+                .iter()
+                .zip(source.normals.as_ref().unwrap())
+            {
+                assert!((n.length() - 1.0).abs() < 1e-3);
+                assert!(n.dot(p.normalize()) > 0.7, "{p}: {n}");
+            }
+            let (min, max) = bounds(&light);
+            let (full_min, full_max) = bounds(&full);
+            assert!(min.cmpge(full_min - 1e-4).all() && max.cmple(full_max + 1e-4).all());
         }
     }
 

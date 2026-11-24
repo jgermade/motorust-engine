@@ -108,6 +108,11 @@ pub struct Settings {
     /// Whether the trees far from the cameras are drawn with lighter meshes
     /// (see [`crate::world`]); off, every tree is drawn whole.
     pub lighter_far_trees: bool,
+    /// Whether the props made elsewhere (with Meshy) far from the cameras
+    /// are drawn with lighter meshes (see
+    /// [`crate::world::prop_pack::PropLevels`]); off, every one is drawn
+    /// whole.
+    pub lighter_far_props: bool,
     /// Whether, with the screen split, the world is drawn lighter: nearer
     /// and coarser shadows, the grass, flowers and petals less far, and the
     /// lighter trees sooner.
@@ -470,6 +475,7 @@ impl Default for Settings {
             pipelined_rendering: true,
             modelled_trees: true,
             lighter_far_trees: false,
+            lighter_far_props: true,
             lighter_split_screen: true,
             performance_log: true,
             shadows: ShadowQuality::default(),

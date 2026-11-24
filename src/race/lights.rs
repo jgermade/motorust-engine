@@ -4,7 +4,8 @@
 //! or, as the options say, a second, on their beat) they go out and the
 //! race starts. Until then every bike waits on the grid, though the players can
 //! rev their engines ([`Race::held`]). Each light beeps as it comes on, and
-//! going out beeps higher, while the lights flash green.
+//! going out beeps higher, while the lights flash green. They wait to begin
+//! until the shaders are ready ([`WarmUp`]).
 //!
 //! In the options ([`crate::settings::RaceStart`]) the lights can also leave the bikes free
 //! on the grid (once the first light is on): a player who moves off before
@@ -19,6 +20,7 @@ use bevy::prelude::*;
 
 use super::Standing;
 use crate::bike::{BikeState, LocalPlayer, Player, Race, RecallToGrid, Retired, Rider};
+use crate::camera::warm_up::WarmUp;
 use crate::menu::GameState;
 use crate::pause;
 use crate::settings::{LightsHold, RaceStart, Settings};
@@ -193,11 +195,13 @@ fn set_the_lights(mut lights: ResMut<StartLights>, time: Res<Time<Real>>, settin
 }
 
 /// With a start at the lights, the bikes wait for them; once out, the race
-/// is on. Restarting the race lights them again.
+/// is on. Restarting the race lights them again. They wait for the shaders
+/// first ([`WarmUp`]).
 fn run_lights(
     time: Res<Time>,
     real: Res<Time<Real>>,
     settings: Res<Settings>,
+    warm: Option<Res<WarmUp>>,
     mut race: ResMut<Race>,
     mut lights: ResMut<StartLights>,
     mut beeps: MessageWriter<StartBeep>,
@@ -216,6 +220,9 @@ fn run_lights(
     // Restarted (see `crate::bike`): back on the grid, the lights again.
     if !race.started && lights.out() {
         *lights = StartLights::new(hold(settings.lights_hold, chance(&real)), lights.count());
+    }
+    if warm.is_some_and(|warm| !warm.done()) {
+        return;
     }
     if let Some(beep) = lights.advance(time.delta_secs()) {
         beeps.write(beep);

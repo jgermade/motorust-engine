@@ -125,6 +125,9 @@ pub struct Scenario {
     /// Whether the picture blurs at speed (see
     /// [`crate::camera::speed_blur`]).
     pub speed_blur: bool,
+    /// Whether the props far away are drawn with lighter meshes, as in
+    /// the game (see [`crate::world::prop_pack::PropLevels`]).
+    pub far_props: bool,
 }
 
 /// Every scenario on each of `tracks`: one player at a fixed reference,
@@ -151,6 +154,7 @@ pub fn scenarios(tracks: &[usize]) -> Vec<Scenario> {
         grass_tiling: GrassTiling::Wide,
         ground_shadows: true,
         speed_blur: true,
+        far_props: true,
     };
     tracks
         .iter()
@@ -227,6 +231,10 @@ pub fn scenarios(tracks: &[usize]) -> Vec<Scenario> {
                     ..base("1p-no-speed-blur", track)
                 },
                 Scenario {
+                    far_props: false,
+                    ..base("1p-whole-props", track)
+                },
+                Scenario {
                     players: 2,
                     ..base("2p", track)
                 },
@@ -254,6 +262,11 @@ pub fn scenarios(tracks: &[usize]) -> Vec<Scenario> {
                     players: 2,
                     speed_blur: false,
                     ..base("2p-no-speed-blur", track)
+                },
+                Scenario {
+                    players: 2,
+                    far_props: false,
+                    ..base("2p-whole-props", track)
                 },
             ]
         })
@@ -776,6 +789,7 @@ fn use_setting(scenario: &Scenario, settings: &mut Settings) {
     settings.flat_at_speed = scenario.flat_at_speed;
     settings.grass_tiling = scenario.grass_tiling;
     settings.speed_blur = scenario.speed_blur;
+    settings.lighter_far_props = scenario.far_props;
 }
 
 /// The ground in the sun's shadows or out of them, as the setting on says,
@@ -1261,8 +1275,8 @@ pub mod tests {
         circuits: &'static crate::circuits::Circuits,
     ) {
         let all = scenarios(&tracks(None, circuits.len()));
-        assert_eq!(all.len(), 24 * circuits.len());
-        let first = &all[..24];
+        assert_eq!(all.len(), 26 * circuits.len());
+        let first = &all[..26];
         assert!(first.iter().all(|scenario| scenario.track == 0));
         // The first the reference; the others one change from it.
         let base = &first[0];
@@ -1278,7 +1292,8 @@ pub mod tests {
                 base.flat_at_speed,
                 base.grass_tiling,
                 base.ground_shadows,
-                base.speed_blur
+                base.speed_blur,
+                base.far_props
             ),
             (
                 1,
@@ -1290,6 +1305,7 @@ pub mod tests {
                 false,
                 true,
                 GrassTiling::Wide,
+                true,
                 true,
                 true
             )
@@ -1308,6 +1324,7 @@ pub mod tests {
                 scenario.grass_tiling != base.grass_tiling,
                 scenario.ground_shadows != base.ground_shadows,
                 scenario.speed_blur != base.speed_blur,
+                scenario.far_props != base.far_props,
             ]
             .iter()
             .filter(|&&changed| changed)
@@ -1400,7 +1417,7 @@ pub mod tests {
         // The laps made again: one player's one fewer, two players' as many.
         assert_eq!(
             bench.laps.iter().map(|lap| lap.len()).collect::<Vec<_>>(),
-            [17, 6]
+            [18, 7]
         );
     }
 
@@ -1469,8 +1486,8 @@ pub mod tests {
                 scenario.track == first.track && scenario.players == first.players
             }));
         }
-        assert_eq!(laps[0].len(), 18);
-        assert_eq!(laps[1].len(), 6);
+        assert_eq!(laps[0].len(), 19);
+        assert_eq!(laps[1].len(), 7);
         assert_eq!(all[laps[2].start].track, 3);
     }
 
@@ -1565,7 +1582,7 @@ pub mod tests {
         let laps = laps(&all);
         let minutes = minutes(circuits, &all, &laps, MEASURE);
         // Bahía's two laps: a couple of minutes, not ten.
-        assert!((2..=6).contains(&minutes), "{minutes}");
+        assert!((2..=7).contains(&minutes), "{minutes}");
         assert!(rough_length(&circuits[0]) > 1000.0 && rough_length(&circuits[0]) < 2000.0);
     }
 
