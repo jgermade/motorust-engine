@@ -154,6 +154,10 @@ pub struct Settings {
     /// is still and dark and mirrors what stands round it, as a dam's lake
     /// (see [`crate::world`]).
     pub cartoon_water: bool,
+    /// Whether the picture blurs out from the middle as the bike goes fast,
+    /// most at the bottom and the sides, the road just ridden over (see
+    /// [`crate::camera::speed_blur`]).
+    pub speed_blur: bool,
     /// How many frames may wait to go to the GPU (`desired_maximum_frame_latency`):
     /// fewer, less lag; more, steadier frames. Applied when the game starts.
     pub frame_latency: u32,
@@ -482,6 +486,7 @@ impl Default for Settings {
             show_textures: false,
             show_coordinates: false,
             cartoon_water: false,
+            speed_blur: true,
             frame_latency: DEFAULT_FRAME_LATENCY,
             keyboard_mode: crate::bike::curves::KeyboardMode::Classic,
             gears: false,

@@ -4,8 +4,8 @@
 //! autopilot, all round the lap with one player and then with two, trying
 //! each setting worth comparing (the shadows' levels, the ground left out of
 //! them, the ways of smoothing the edges, the lighter far trees, the relief
-//! of the textures, less detail for two players), with the frame rate
-//! unlimited.
+//! of the textures, the speed blur, less detail for two players), with the
+//! frame rate unlimited.
 //!
 //! All round the lap the settings take turns of a couple of seconds (let
 //! settle half a second, then measured), each round in a different order,
@@ -122,6 +122,9 @@ pub struct Scenario {
     /// it: without, how much cutting it into pieces the cascades could
     /// leave out would save at most (see [`GroundPiece`]).
     pub ground_shadows: bool,
+    /// Whether the picture blurs at speed (see
+    /// [`crate::camera::speed_blur`]).
+    pub speed_blur: bool,
 }
 
 /// Every scenario on each of `tracks`: one player at a fixed reference,
@@ -147,6 +150,7 @@ pub fn scenarios(tracks: &[usize]) -> Vec<Scenario> {
         flat_at_speed: true,
         grass_tiling: GrassTiling::Wide,
         ground_shadows: true,
+        speed_blur: true,
     };
     tracks
         .iter()
@@ -219,6 +223,10 @@ pub fn scenarios(tracks: &[usize]) -> Vec<Scenario> {
                     ..base("1p-grass-stochastic", track)
                 },
                 Scenario {
+                    speed_blur: false,
+                    ..base("1p-no-speed-blur", track)
+                },
+                Scenario {
                     players: 2,
                     ..base("2p", track)
                 },
@@ -241,6 +249,11 @@ pub fn scenarios(tracks: &[usize]) -> Vec<Scenario> {
                     players: 2,
                     ground_shadows: false,
                     ..base("2p-no-ground-shadows", track)
+                },
+                Scenario {
+                    players: 2,
+                    speed_blur: false,
+                    ..base("2p-no-speed-blur", track)
                 },
             ]
         })
@@ -762,6 +775,7 @@ fn use_setting(scenario: &Scenario, settings: &mut Settings) {
     settings.road_relief = scenario.road_relief;
     settings.flat_at_speed = scenario.flat_at_speed;
     settings.grass_tiling = scenario.grass_tiling;
+    settings.speed_blur = scenario.speed_blur;
 }
 
 /// The ground in the sun's shadows or out of them, as the setting on says,
@@ -1247,8 +1261,8 @@ pub mod tests {
         circuits: &'static crate::circuits::Circuits,
     ) {
         let all = scenarios(&tracks(None, circuits.len()));
-        assert_eq!(all.len(), 22 * circuits.len());
-        let first = &all[..22];
+        assert_eq!(all.len(), 24 * circuits.len());
+        let first = &all[..24];
         assert!(first.iter().all(|scenario| scenario.track == 0));
         // The first the reference; the others one change from it.
         let base = &first[0];
@@ -1263,7 +1277,8 @@ pub mod tests {
                 base.road_relief,
                 base.flat_at_speed,
                 base.grass_tiling,
-                base.ground_shadows
+                base.ground_shadows,
+                base.speed_blur
             ),
             (
                 1,
@@ -1275,6 +1290,7 @@ pub mod tests {
                 false,
                 true,
                 GrassTiling::Wide,
+                true,
                 true
             )
         );
@@ -1291,6 +1307,7 @@ pub mod tests {
                 scenario.flat_at_speed != base.flat_at_speed,
                 scenario.grass_tiling != base.grass_tiling,
                 scenario.ground_shadows != base.ground_shadows,
+                scenario.speed_blur != base.speed_blur,
             ]
             .iter()
             .filter(|&&changed| changed)
@@ -1383,7 +1400,7 @@ pub mod tests {
         // The laps made again: one player's one fewer, two players' as many.
         assert_eq!(
             bench.laps.iter().map(|lap| lap.len()).collect::<Vec<_>>(),
-            [16, 5]
+            [17, 6]
         );
     }
 
@@ -1452,8 +1469,8 @@ pub mod tests {
                 scenario.track == first.track && scenario.players == first.players
             }));
         }
-        assert_eq!(laps[0].len(), 17);
-        assert_eq!(laps[1].len(), 5);
+        assert_eq!(laps[0].len(), 18);
+        assert_eq!(laps[1].len(), 6);
         assert_eq!(all[laps[2].start].track, 3);
     }
 
