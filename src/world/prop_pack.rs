@@ -323,6 +323,7 @@ impl PropPacks {
                 if self.0.contains_key(folder) {
                     continue;
                 }
+                let start = bevy::platform::time::Instant::now();
                 let pack = PropPack::load(
                     meshes,
                     images,
@@ -330,6 +331,11 @@ impl PropPacks {
                     crate::content::file(&format!("models/{folder}/props.bin")),
                     crate::content::file(&format!("models/{folder}/color.jpg")),
                     crate::content::try_file(&format!("models/{folder}/glow.jpg")).ok(),
+                );
+                info!(
+                    "Props of models/{folder}: {} pieces, with their lighter meshes, in {:.0} ms",
+                    pack.pieces.len(),
+                    start.elapsed().as_secs_f64() * 1000.0
                 );
                 self.0.insert(folder, pack);
             }

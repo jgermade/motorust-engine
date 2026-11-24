@@ -28,6 +28,9 @@ const FEWEST_FRAMES: u32 = 8;
 const SETTLED: f32 = 0.3;
 /// The longest (s) the warm-up lasts, however many are still waiting.
 pub const LONGEST: f32 = 6.0;
+/// The longest step (s) one frame counts for: the frame the circuit is
+/// built in takes seconds, and is no time spent waiting for the shaders.
+const MAX_STEP: f32 = 0.1;
 
 pub struct WarmUpPlugin;
 
@@ -119,6 +122,7 @@ impl WarmUp {
         if self.done {
             return false;
         }
+        let dt = dt.clamp(0.0, MAX_STEP);
         self.frames += 1;
         self.elapsed += dt;
         if count.waiting > 0 || count.all != self.last.all {
@@ -206,6 +210,15 @@ mod tests {
             assert!(!warm.step(slow, count(80, 0)));
         }
         assert!(warm.step(slow, count(80, 0)));
+    }
+
+    #[test]
+    fn a_long_frame_counts_for_little() {
+        let mut warm = WarmUp::new();
+        // The circuit built in one frame of 2.3 s, nothing waiting: not
+        // settled by it.
+        warm.step(2.3, count(70, 0));
+        assert!(warm.elapsed <= MAX_STEP && warm.settled <= MAX_STEP);
     }
 
     #[test]
