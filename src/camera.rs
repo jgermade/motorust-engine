@@ -126,6 +126,13 @@ impl Plugin for ChaseCameraPlugin {
     }
 }
 
+/// Which way is up off a road a bike heading `forward` (a unit vector,
+/// up or down its slope) rides on: square to its slope, level across it.
+fn road_up(forward: Vec3) -> Vec3 {
+    let across = forward.cross(Vec3::Y).normalize_or(Vec3::X);
+    across.cross(forward).normalize_or(Vec3::Y)
+}
+
 /// A qué jugador sigue esta cámara (0 para Player 1, 1 para Player 2).
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CameraPlayer(pub usize);
@@ -158,6 +165,10 @@ struct ChaseCamera {
     speed: f32,
     bike: Vec3,
     ahead: Vec3,
+    /// Which way is up off the road under the bike (a unit vector): along
+    /// its slope, or round a loop or a tube the camera's own up. What stands
+    /// over the road there stays sharp (see [`speed_blur`]).
+    road_up: Vec3,
 }
 
 /// El stick derecho del mando que más se esté moviendo (x a la derecha, y
@@ -645,6 +656,11 @@ fn follow_player(
         chase.ahead = (toward - up * toward.dot(up)).normalize_or_zero();
         chase.bike = bike_transform.translation;
         chase.speed = speed / tuning.max_speed;
+        chase.road_up = if chase.tilt.is_some() {
+            up
+        } else {
+            road_up(bike_transform.forward().as_vec3())
+        };
 
         if let Projection::Perspective(perspective) = projection.as_mut() {
             perspective.fov = FOV.start.lerp(FOV.end, speed_factor);
@@ -657,6 +673,25 @@ mod tests {
     use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
     use super::*;
+
+    #[test]
+    fn up_off_the_road_is_square_to_its_slope_and_level_across_it() {
+        assert!(road_up(Vec3::NEG_Z).abs_diff_eq(Vec3::Y, 1e-6));
+        // Up a slope of 45° northwards: up leans back south.
+        let climbing = Vec3::new(0.0, 1.0, -1.0).normalize();
+        let up = road_up(climbing);
+        assert!(
+            up.abs_diff_eq(Vec3::new(0.0, 1.0, 1.0).normalize(), 1e-5),
+            "{up}"
+        );
+        // Heading east and down a little: square to it, level across.
+        let down = Vec3::new(1.0, -0.2, 0.0).normalize();
+        let up = road_up(down);
+        assert!(
+            up.dot(down).abs() < 1e-5 && up.z.abs() < 1e-5 && up.y > 0.9,
+            "{up}"
+        );
+    }
 
     #[test]
     fn the_camera_turns_into_tight_corners_only() {
