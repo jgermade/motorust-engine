@@ -3593,7 +3593,7 @@ dependencies = [
 
 [[package]]
 name = "motorust-engine"
-version = "0.0.29"
+version = "0.0.30"
 dependencies = [
  "bevy",
  "erased-serde",
