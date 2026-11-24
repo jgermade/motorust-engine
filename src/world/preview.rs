@@ -79,6 +79,8 @@ pub(super) fn prepare_preview(
     let (structures, lamps, tops) =
         structures::structure_pieces(&track, &terrain, scenery, textures, Some(stretch));
     pieces.extend(structures);
+    // None left with nothing in it (see `super::prepare`).
+    pieces.retain(|(mesh, _)| mesh.count_vertices() > 0);
     ground.extend(tops);
     let sea_mirror = (!scenery.cartoon_water).then(|| {
         mirror::sky_mirror(

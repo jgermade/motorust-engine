@@ -326,6 +326,10 @@ fn prepare(
     let (structures, lamps, tops) =
         structures::structure_pieces(&track, &terrain, scenery, textures, None);
     pieces.extend(structures);
+    // None left with nothing in it (a kerb of a colour this circuit never
+    // paints, a wall of a style it never builds): Bevy would log an error
+    // for each, finding no room made for it as it uploads it.
+    pieces.retain(|(mesh, _)| mesh.count_vertices() > 0);
     ground.extend(tops);
     // The tangents of what is drawn with relief, here rather than on the
     // main thread as it is put in the world.
@@ -1518,6 +1522,29 @@ fn spawn_sun(mut commands: Commands) {
 #[cfg(any(test, feature = "testing"))]
 pub mod tests {
     use super::*;
+
+    /// No circuit prepared has a mesh of its roads or structures with
+    /// nothing in it: Bevy logs an error for each it uploads.
+    pub fn no_piece_of_a_circuit_is_left_empty_on(circuits: &'static crate::circuits::Circuits) {
+        let mut world = World::new();
+        world.init_resource::<Assets<Image>>();
+        let textures = textures::WorldTextures::from_world(&mut world);
+        for index in 0..circuits.len() {
+            let prepared = prepare(*circuits, index, &textures, Urgency::Now);
+            assert!(!prepared.pieces.is_empty());
+            for (mesh, _) in &prepared.pieces {
+                assert!(
+                    mesh.count_vertices() > 0,
+                    "an empty piece on circuit {index}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_piece_of_the_demo_is_left_empty() {
+        no_piece_of_a_circuit_is_left_empty_on(&crate::testing::DEMO);
+    }
 
     pub fn circuits_are_prepared_in_the_menus_and_let_go_for_a_race_on(
         circuits: &'static crate::circuits::Circuits,
