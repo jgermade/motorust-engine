@@ -3,8 +3,9 @@
 // average of a few samples taken from it towards where the road ahead
 // vanishes, the lower and the faster, the further apart; over the bike and
 // out to the sides it stays sharp, and the rest of the picture is copied as
-// it is. Only the road: what stands over it (another bike, by its depth)
-// stays sharp, and is left out of the samples of the road round it.
+// it is. Only the road: the bike itself and what stands over the road
+// (another bike), by their depth, stay sharp, and are left out of the
+// samples of the road round them.
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
 
@@ -26,6 +27,8 @@ struct SpeedBlur {
     // bike as a plane: the way up off it, and how far along that it is.
     world_from_clip: mat4x4<f32>,
     road: vec4<f32>,
+    // The middle of the bike and its rider (the last unused).
+    bike: vec4<f32>,
 }
 
 @group(0) @binding(2) var<uniform> blur: SpeedBlur;
@@ -47,18 +50,27 @@ const REACH: f32 = 0.12;
 // width) it blurs all it does, and from where on it stays sharp.
 const WIDE: f32 = 0.28;
 const WIDE_EDGE: f32 = 0.46;
-// How far round the bike (a share of the viewport's height) it stays
-// sharp, and where it blurs as the rest under it.
+// Where the depth cannot be read, how far round the bike (a share of the
+// viewport's height) it stays sharp, and where it blurs as the rest under
+// it (with the depth, the bike is told from the road by it instead).
 const KEEP: f32 = 0.08;
 const KEEP_EDGE: f32 = 0.24;
 // How high over the road's plane under the bike (m) what is drawn may be
 // and still blur as the road, and from where on it stays sharp.
 const OVER_ROAD: f32 = 0.15;
 const OVER_ROAD_EDGE: f32 = 0.35;
+// Round the bike itself (within BIKE_REACH of its middle, m, as far as
+// BIKE_REACH_EDGE), what is a little over the road already stands on it
+// (NEAR_ROAD to NEAR_ROAD_EDGE, m): its tyres down to where they touch it,
+// while the road round them still blurs.
+const BIKE_REACH: f32 = 1.2;
+const BIKE_REACH_EDGE: f32 = 1.5;
+const NEAR_ROAD: f32 = 0.03;
+const NEAR_ROAD_EDGE: f32 = 0.08;
 
 // How much of what is drawn at `at` (across and down the viewport, 0 to 1)
-// is not road: 0 on the road, 1 standing over it (or the sky). All road
-// where the depth cannot be read.
+// is kept sharp: 0 on the road, 1 standing over it (the rider's own bike,
+// the others, the sky). All road where the depth cannot be read.
 fn off_road(at: vec2<f32>, size: vec2<f32>) -> f32 {
 #ifdef DEPTH
     let depth_size = vec2<f32>(textureDimensions(depth));
@@ -71,8 +83,12 @@ fn off_road(at: vec2<f32>, size: vec2<f32>) -> f32 {
     }
     let clip = vec4(at.x * 2.0 - 1.0, 1.0 - at.y * 2.0, z, 1.0);
     let world = blur.world_from_clip * clip;
-    let height = dot(world.xyz / world.w, blur.road.xyz) - blur.road.w;
-    return smoothstep(OVER_ROAD, OVER_ROAD_EDGE, height);
+    let point = world.xyz / world.w;
+    let height = dot(point, blur.road.xyz) - blur.road.w;
+    let near = 1.0 - smoothstep(BIKE_REACH, BIKE_REACH_EDGE, distance(point, blur.bike.xyz));
+    let low = mix(OVER_ROAD, NEAR_ROAD, near);
+    let high = mix(OVER_ROAD_EDGE, NEAR_ROAD_EDGE, near);
+    return smoothstep(low, high, height);
 #else
     return 0.0;
 #endif
@@ -91,7 +107,11 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     // out to the sides, none at the edges.
     let under = smoothstep(blur.keep.y, 1.0, local.y);
     let side = 1.0 - smoothstep(WIDE, WIDE_EDGE, abs(local.x - blur.keep.x));
+#ifdef DEPTH
+    var amount = blur.strength * under * side;
+#else
     var amount = blur.strength * under * side * smoothstep(KEEP, KEEP_EDGE, bike);
+#endif
     if amount < 0.002 {
         return color;
     }

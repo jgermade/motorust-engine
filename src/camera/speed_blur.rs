@@ -104,6 +104,10 @@ const VANISHING: f32 = 2000.0;
 /// How high over the bike's origin the middle of the bike and rider is
 /// (m), kept sharp.
 const RIDER: f32 = 0.8;
+/// How high over the bike's origin (on the road, between its wheels) the
+/// middle of what the shader keeps sharp round it is (m): from there, its
+/// wheels, its tail and its rider, leaning or not, are within 1.2 m.
+const BIKE_MIDDLE: f32 = 0.6;
 /// Whether the pass reads the depth: not on the web (see the module's
 /// notes).
 const READS_DEPTH: bool = !cfg!(target_arch = "wasm32");
@@ -134,6 +138,9 @@ pub struct SpeedBlur {
     /// The road under the bike, as a plane: the way up off it, and how far
     /// along that the road is from the world's origin (m).
     pub road: Vec4,
+    /// The middle of the bike and its rider (the last unused): all within
+    /// reach of it stays sharp, down to its tyres on the road.
+    pub bike: Vec4,
 }
 
 impl SyncComponent for SpeedBlur {
@@ -410,6 +417,7 @@ fn aim_speed_blur(
         let from = transform.translation();
         let size = rect.size().as_vec2().max(Vec2::ONE);
         let world_from_clip = transform.to_matrix() * camera.clip_from_view().inverse();
+        let road_up = chase.road_up.normalize_or(Vec3::Y);
         *blur = SpeedBlur {
             viewport: Vec4::new(rect.min.x as f32, rect.min.y as f32, size.x, size.y),
             center: at(from + chase.ahead * VANISHING).unwrap_or(Vec2::new(0.5, 0.4)),
@@ -418,7 +426,8 @@ fn aim_speed_blur(
             aspect: size.x / size.y,
             padding: Vec2::ZERO,
             world_from_clip,
-            road: road_plane(chase.bike, chase.road_up.normalize_or(Vec3::Y)),
+            road: road_plane(chase.bike, road_up),
+            bike: (chase.bike + road_up * BIKE_MIDDLE).extend(0.0),
         };
     }
 }
@@ -452,7 +461,7 @@ mod tests {
 
     #[test]
     fn the_shader_takes_whole_lines_of_sixteen_bytes() {
-        assert_eq!(SpeedBlur::min_size().get(), 128);
+        assert_eq!(SpeedBlur::min_size().get(), 144);
     }
 
     /// A rider's camera behind a bike going `speed` (a share of the top
@@ -551,8 +560,10 @@ mod tests {
             fast.center.y < 0.5 && fast.keep.y > fast.center.y,
             "{fast:?}"
         );
-        // The road under the bike, level, through it.
+        // The road under the bike, level, through it, and the middle of the
+        // bike over it.
         assert_eq!(fast.road, Vec4::new(0.0, 1.0, 0.0, 0.0));
+        assert_eq!(fast.bike, Vec4::new(0.0, BIKE_MIDDLE, 0.0, 0.0));
         assert_eq!(aimed(GameState::Race, true, 0.3).strength, 0.0);
         assert_eq!(aimed(GameState::Race, false, 1.0).strength, 0.0);
         assert_eq!(aimed(GameState::Select, true, 1.0).strength, 0.0);
