@@ -1,7 +1,9 @@
-// The speed blur (see `speed_blur.rs`): each pixel of a rider's camera's
-// part of the picture as the average of a few samples taken from it
-// towards where the road ahead vanishes, the further out and the faster,
-// the further apart; the rest of the picture copied as it is.
+// The speed blur (see `speed_blur.rs`): under the bike, the road just
+// ridden over, each pixel of a rider's camera's part of the picture as the
+// average of a few samples taken from it towards where the road ahead
+// vanishes, the lower and the faster, the further apart; over the bike and
+// out to the sides it stays sharp, and the rest of the picture is copied as
+// it is.
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput
 
@@ -28,12 +30,12 @@ const SAMPLES: i32 = 10;
 // How far towards the vanishing point the samples reach at the most, a
 // share of the way there.
 const REACH: f32 = 0.12;
-// From how far out from the vanishing point (a share of the viewport's
-// height) it starts to blur, and where it blurs all it does.
-const INNER: f32 = 0.18;
-const OUTER: f32 = 0.75;
-// How far round the bike (the same share) it stays sharp, and where it
-// blurs as the rest.
+// How far out to either side of the bike (a share of the viewport's
+// width) it blurs all it does, and from where on it stays sharp.
+const WIDE: f32 = 0.28;
+const WIDE_EDGE: f32 = 0.46;
+// How far round the bike (a share of the viewport's height) it stays
+// sharp, and where it blurs as the rest under it.
 const KEEP: f32 = 0.08;
 const KEEP_EDGE: f32 = 0.24;
 
@@ -45,10 +47,12 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         return color;
     }
     let shape = vec2(blur.aspect, 1.0);
-    let out = length((local - blur.center) * shape);
     let bike = length((local - blur.keep) * shape);
-    let amount = blur.strength * smoothstep(INNER, OUTER, out)
-        * smoothstep(KEEP, KEEP_EDGE, bike);
+    // Only under the bike, more the lower, all of it at the bottom; less
+    // out to the sides, none at the edges.
+    let under = smoothstep(blur.keep.y, 1.0, local.y);
+    let side = 1.0 - smoothstep(WIDE, WIDE_EDGE, abs(local.x - blur.keep.x));
+    let amount = blur.strength * under * side * smoothstep(KEEP, KEEP_EDGE, bike);
     if amount < 0.002 {
         return color;
     }

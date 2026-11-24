@@ -1,12 +1,13 @@
-//! The speed blur (Options > Graphics): as a bike goes fast, the picture
-//! of its rider's camera blurs out from where the road ahead vanishes,
-//! most at the bottom and the sides (the road just ridden over, the verges
-//! going by), never on the bike itself. One pass over the picture, after
-//! the edges are smoothed, as Bevy's FXAA is drawn: a few samples of each
-//! pixel taken towards the vanishing point, more and further apart the
-//! faster and the further out. It needs nothing drawn twice (no depth or
-//! motion of the scene), so it costs the same whatever the circuit: a
-//! fraction of a millisecond at 1080p.
+//! The speed blur (Options > Graphics > Road blur): as a bike goes fast,
+//! the road it has just ridden over, under it in its rider's camera's
+//! picture, blurs in streaks towards where the road ahead vanishes, more
+//! the lower; over the bike, out to the sides and on the bike itself it
+//! stays sharp. One pass over the picture, after the edges are smoothed,
+//! as Bevy's FXAA is drawn: a few samples of each pixel taken towards the
+//! vanishing point, more and further apart the faster and the lower. It
+//! needs nothing drawn twice (no depth or motion of the scene), so it
+//! costs the same whatever the circuit: a fraction of a millisecond at
+//! 1080p.
 //!
 //! With the screen split, both cameras draw into one picture: each one's
 //! pass blurs only its own part of it (its viewport, see [`SpeedBlur`]),

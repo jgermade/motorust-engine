@@ -154,8 +154,8 @@ pub struct Settings {
     /// is still and dark and mirrors what stands round it, as a dam's lake
     /// (see [`crate::world`]).
     pub cartoon_water: bool,
-    /// Whether the picture blurs out from the middle as the bike goes fast,
-    /// most at the bottom and the sides, the road just ridden over (see
+    /// Whether the road just ridden over, under the bike, blurs as it goes
+    /// fast (Options > Graphics > Road blur; see
     /// [`crate::camera::speed_blur`]).
     pub speed_blur: bool,
     /// How many frames may wait to go to the GPU (`desired_maximum_frame_latency`):

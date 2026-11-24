@@ -533,7 +533,7 @@ enum GraphicsItem {
     GrassTiling,
     /// The sea mirroring, or the cartoon one.
     Water,
-    /// Whether the picture blurs out from the middle at speed.
+    /// Whether the road under the bike blurs at speed.
     SpeedBlur,
     /// The page of what the performance HUD shows: the frame rate, the
     /// pixels the world is drawn at and where the player is on the map.
@@ -2404,8 +2404,8 @@ fn show_options_menu(
                     ),
                     GraphicsItem::SpeedBlur => Row::check(
                         match lang {
-                            Language::Spanish => "Desenfoque de velocidad",
-                            Language::English => "Speed blur",
+                            Language::Spanish => "Desenfoque del asfalto",
+                            Language::English => "Road blur",
                         },
                         settings.speed_blur,
                     ),
